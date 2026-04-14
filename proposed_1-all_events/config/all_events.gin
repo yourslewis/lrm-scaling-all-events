@@ -1,0 +1,40 @@
+# ============================================================
+# File: all_events.gin
+# Purpose: All-events HSTU for benchmark v4 — P1 experiment
+# Same architecture as baseline but trained on all 14 event types
+# ============================================================
+
+get_reco_dataset.dataset_name = "benchmarkv4_all_events"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "MultiDomainPrecomputed"
+make_model.item_embedding_dim = 128
+make_model.interaction_module_type = "DotProduct"
+
+MultiDomainPrecomputedEmbedding.proj_hidden_dims = [64, 128, 128, 128]
+MultiDomainPrecomputedEmbedding.proj_activation = "silu"
+
+InputFeaturesPreprocessorModule.d_model = 128
+InputFeaturesPreprocessorModule.max_sequence_len = 200
+
+HSTUEncoder.num_blocks = 16
+HSTUEncoder.num_heads = 4
+HSTUEncoder.dqk = 32
+HSTUEncoder.dv = 32
+HSTUEncoder.linear_dropout = 0.2
+HSTUEncoder.attn_dropout = 0.0
+
+DotProductSimilarity.embedding_dim = 128
+DotProductSimilarity.temperature = 0.05
+
+InBatchNegativesSampler.num_negatives = 512
+InBatchNegativesSampler.strategy = "rotate-global"
+
+Trainer.learning_rate = 0.001
+Trainer.warmup_steps = 100
+Trainer.weight_decay = 0
+Trainer.batch_size = 128
+Trainer.num_epochs = 100
