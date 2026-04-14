@@ -1,0 +1,74 @@
+# ============================================================
+# Experiment: Local Debug (small model, synthetic data)
+# For interactive development and CI testing.
+# ============================================================
+
+dataset:
+  name: local_data
+  experiment_name: semantic_next_event_prediction
+  max_sequence_length: 50
+  positional_sampling_ratio: 1.0
+  domain_offset: 1_000_000_000
+  domains:
+    0:
+      item_id_range: [20, 999]
+      embedding_dim: 64
+      shard_size: 1000
+      shard_count: 1
+    1:
+      item_id_range: [0, 999]
+      embedding_dim: 64
+      shard_size: 1000
+      shard_count: 1
+    2:
+      item_id_range: [0, 999]
+      embedding_dim: 64
+      shard_size: 1000
+      shard_count: 1
+    3:
+      item_id_range: [0, 999]
+      embedding_dim: 64
+      shard_size: 1000
+      shard_count: 1
+
+model:
+  encoder:
+    type: HSTU
+    num_blocks: 2
+    num_heads: 1
+    dqk: 32
+    dv: 32
+    linear_dropout_rate: 0.1
+  embedding:
+    type: MultiDomainPrecomputed
+    item_embedding_dim: 50
+    input_dim: 64
+    shard_size: 1000
+  preprocessor:
+    type: LearnablePositionalEmbeddingInputFeaturesPreprocessor
+    dropout_rate: 0.1
+  postprocessor:
+    type: l2_norm
+  loss:
+    type: SampledSoftmaxLoss
+    temperature: 0.05
+    num_negatives: 32
+  sampling:
+    strategy: InBatch
+    item_l2_norm: true
+
+trainer:
+  local_batch_size: 16
+  eval_batch_size: 16
+  num_epochs: 2
+  learning_rate: 1.0e-3
+  weight_decay: 0
+  enable_tf32: false
+  num_workers: 0
+  eval:
+    interval: 50
+    domains:
+      ads:
+        enabled: true
+        top_k_method: MIPSBruteForceTopK
+        max_batches: 5

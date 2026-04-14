@@ -1,0 +1,93 @@
+# ============================================================
+# Experiment: AstroV6 Large (~8.8M params)
+# Replaces: configs/astrov6/astrov6_large.gin
+# ============================================================
+
+dataset:
+  name: astrov6
+  experiment_name: semantic_next_event_prediction
+  max_sequence_length: 200
+  positional_sampling_ratio: 1.0
+  domain_offset: 1_000_000_000
+  domains:
+    0:
+      item_id_range: [20, 42_262_200]
+      embedding_dim: 64
+      shard_size: 25_000_000
+      shard_count: 2
+      embedding_source: precomputed
+    1:
+      item_id_range: [0, 301_422_400]
+      embedding_dim: 64
+      shard_size: 25_000_000
+      shard_count: 13
+      embedding_source: precomputed
+    2:
+      item_id_range: [0, 40_592_094]
+      embedding_dim: 64
+      shard_size: 25_000_000
+      shard_count: 2
+      embedding_source: precomputed
+
+model:
+  encoder:
+    type: HSTU
+    num_blocks: 32
+    num_heads: 4
+    dqk: 64
+    dv: 64
+    linear_dropout_rate: 0.2
+    kernel: default           # Future: "hstu_2024" for paper kernel improvements
+  embedding:
+    type: MultiDomainPrecomputed
+    item_embedding_dim: 256
+    input_dim: 64
+    shard_size: 25_000_000
+    preload: true
+  preprocessor:
+    type: LearnablePositionalEmbeddingInputFeaturesPreprocessor
+    dropout_rate: 0.2
+  postprocessor:
+    type: l2_norm
+    eps: 1.0e-6
+  loss:
+    type: SampledSoftmaxLoss
+    temperature: 0.05
+    num_negatives: 1280
+    activation_checkpoint: false
+  sampling:
+    strategy: InBatch
+    item_l2_norm: true
+    l2_norm_eps: 1.0e-6
+  interaction_type: DotProduct
+  # Supervision weighting — config-driven replacement for hardcoded 32x ads multiplier
+  supervision:
+    domain_weights:
+      0: 32.0       # Domain 0 (ads) gets 32x weight
+    train_domains: null  # null = all domains; [0] = ads only
+    target_position: all  # "all" | "last"
+  # Future: interest extraction
+  interest:
+    mode: single
+
+trainer:
+  local_batch_size: 64
+  eval_batch_size: 128
+  num_epochs: 5
+  learning_rate: 1.0e-3
+  weight_decay: 0
+  num_warmup_steps: 0
+  enable_tf32: true
+  num_workers: 4
+  eval:
+    interval: 1000
+    domains:
+      ads:
+        enabled: true
+        top_k_method: MIPSBruteForceTopK
+        max_batches: 100
+      # Future: organic evaluation
+      # organic:
+      #   enabled: false
+      #   top_k_method: MIPSBruteForceTopK
+      #   max_batches: 50

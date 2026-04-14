@@ -1,0 +1,32 @@
+# ============================================================
+# File: eval_07082025_roberta.gin
+# Purpose: Eval config file when using XLM_Roberta_Base as event encoder model, it works for training config "training_data_07082025_semantic_next_event_prediction.gin" and "training_data_07082025_finetune.gin",
+# it mainly changes the embedding_module_type from "MultiDomainPrecomputed" to "xlm_roberta_base_proj"
+# ============================================================
+
+get_reco_dataset.dataset_name = "training_data_07082025"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0         # not used
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "xlm_roberta_base_proj"
+make_model.item_embedding_dim = 256
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5                      # not used 
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 1280
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "RotateInDomainGlobalNegativesSampler"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+hstu_encoder.num_blocks = 32   # maybe increase
+hstu_encoder.num_heads = 4
+hstu_encoder.dqk = 64
+hstu_encoder.dv = 64
+hstu_encoder.linear_dropout_rate = 0.2

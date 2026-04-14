@@ -1,0 +1,45 @@
+# ============================================================
+# File: astrov6_xl.gin
+# Purpose: XL model for AstroV6 real data on 2x RTX 4090
+# Reduced from 48 blocks/8 heads (OOMed) to 32 blocks/8 heads
+# with larger embedding dim to keep high capacity
+# ============================================================
+
+get_reco_dataset.dataset_name = "astrov6"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "MultiDomainPrecomputed"
+make_model.item_embedding_dim = 256
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 1280
+make_model.loss_activation_checkpoint = True
+make_model.sampling_strategy = "InBatch"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+Trainer.local_batch_size = 32
+Trainer.eval_batch_size = 128
+Trainer.main_module_bf16 = False
+Trainer.num_epochs = 5
+Trainer.learning_rate = 1e-3
+Trainer.weight_decay = 0
+Trainer.num_warmup_steps = 0
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+
+create_data_loader.num_workers = 4
+
+hstu_encoder.num_blocks = 48
+hstu_encoder.num_heads = 8
+hstu_encoder.dqk = 64
+hstu_encoder.dv = 64
+hstu_encoder.linear_dropout_rate = 0.2
