@@ -1,0 +1,32 @@
+# Result folders — large files, not synced to GitHub
+baseline_result/
+proposed_result_1-all_events/
+proposed_result_2-mmoe_ple/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Checkpoints
+*.pt
+*.pth
+*.ckpt
+*.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+wandb/
