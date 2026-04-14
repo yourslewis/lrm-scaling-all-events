@@ -206,7 +206,7 @@ class Trainer:
         if self.main_module_bf16:                                 # default to be False
             self.model = self.model.to(torch.bfloat16)
         self.model = self.model.to(self.device)
-        self.model = DDP(self.model, device_ids=[self.local_rank])
+        self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
 
         date_str = date.today().strftime("%Y-%m-%d")
         model_subfolder = f"{self.dataset.dataset_name}-l{self.dataset.max_sequence_length}"
