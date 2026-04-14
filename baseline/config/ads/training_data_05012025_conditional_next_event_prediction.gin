@@ -1,0 +1,40 @@
+get_reco_dataset.dataset_name = "training_data_05012025"
+get_reco_dataset.experiment_name = "conditional_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "local"
+make_model.item_embedding_dim = 50
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingRatedInputFeaturesPreprocessor" 
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 3
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 1280
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "global"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+Trainer.local_batch_size = 128
+Trainer.eval_batch_size = 128
+Trainer.main_module_bf16 = False
+Trainer.num_epochs = 101
+Trainer.learning_rate = 1e-3
+Trainer.weight_decay = 0
+Trainer.num_warmup_steps = 0
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+
+create_data_loader.shuffle = True
+create_data_loader.num_workers = 8
+create_data_loader.prefetch_factor = 4
+
+hstu_encoder.num_blocks = 8
+hstu_encoder.num_heads = 2
+hstu_encoder.dqk = 25
+hstu_encoder.dv = 25
+hstu_encoder.linear_dropout_rate = 0.2

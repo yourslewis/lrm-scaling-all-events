@@ -1,0 +1,45 @@
+# ============================================================
+# File: training_data_07082025_finetune.gin
+# Purpose: This is the training config file for benchmarkV2 sequential data. This experiment accept the a existing checkpoint, and keep finetuning on top of that.
+# ============================================================
+
+get_reco_dataset.dataset_name = "training_data_07082025"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction_finetune_ads"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0         # not used
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "MultiDomainPrecomputed"
+make_model.item_embedding_dim = 256
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5                      # not used 
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 1280
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "RotateInDomainGlobalNegativesSampler"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+Trainer.local_batch_size = 140
+Trainer.eval_batch_size = 256
+Trainer.main_module_bf16 = False
+Trainer.num_epochs = 101
+Trainer.learning_rate = 1e-3
+Trainer.weight_decay = 0
+Trainer.num_warmup_steps = 0
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+
+create_data_loader.shuffle = True
+create_data_loader.num_workers = 2
+create_data_loader.prefetch_factor = 4
+
+hstu_encoder.num_blocks = 32   # maybe increase
+hstu_encoder.num_heads = 4
+hstu_encoder.dqk = 64
+hstu_encoder.dv = 64
+hstu_encoder.linear_dropout_rate = 0.2
