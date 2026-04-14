@@ -14,9 +14,6 @@ make_model.embedding_module_type = "MultiDomainPrecomputed"
 make_model.item_embedding_dim = 128
 make_model.interaction_module_type = "DotProduct"
 
-MultiDomainPrecomputedEmbedding.proj_hidden_dims = [64, 128, 128, 128]
-MultiDomainPrecomputedEmbedding.proj_activation = "silu"
-
 InputFeaturesPreprocessorModule.d_model = 128
 InputFeaturesPreprocessorModule.max_sequence_len = 200
 
