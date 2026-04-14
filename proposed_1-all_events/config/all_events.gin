@@ -1,7 +1,8 @@
 # ============================================================
 # File: all_events.gin
-# Purpose: All-events HSTU for benchmark v4 — P1 experiment
-# Same architecture as baseline but trained on all 14 event types
+# Purpose: All-events HSTU on benchmark v4 data — P1 experiment
+# Same architecture as baseline but trained on all 14 event types (5 domains)
+# Eval still on ads (domain 0) for fair comparison
 # ============================================================
 
 get_reco_dataset.dataset_name = "benchmarkv4_all_events"
@@ -13,25 +14,39 @@ make_model.main_module = "HSTU"
 make_model.embedding_module_type = "MultiDomainPrecomputed"
 make_model.item_embedding_dim = 128
 make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingEventTypeEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 512
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "InBatch"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
 
-InputFeaturesPreprocessorModule.d_model = 128
-InputFeaturesPreprocessorModule.max_sequence_len = 200
+# P1: train on ALL domains, but eval/supervise on ads (domain 0) for fair comparison
+# Weight ads events higher since they're only ~1% of the data
+make_model.supervision_domain_weights = {0: 1.0, 1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1}
+make_model.supervision_train_domains = [0, 1, 2, 3, 4]
 
-HSTUEncoder.num_blocks = 16
-HSTUEncoder.num_heads = 4
-HSTUEncoder.dqk = 32
-HSTUEncoder.dv = 32
-HSTUEncoder.linear_dropout = 0.2
-HSTUEncoder.attn_dropout = 0.0
-
-DotProductSimilarity.embedding_dim = 128
-DotProductSimilarity.temperature = 0.05
-
-InBatchNegativesSampler.num_negatives = 512
-InBatchNegativesSampler.strategy = "rotate-global"
-
-Trainer.learning_rate = 0.001
-Trainer.warmup_steps = 100
-Trainer.weight_decay = 0
-Trainer.batch_size = 128
+Trainer.local_batch_size = 128
+Trainer.eval_batch_size = 128
+Trainer.main_module_bf16 = False
 Trainer.num_epochs = 100
+Trainer.learning_rate = 1e-3
+Trainer.weight_decay = 0
+Trainer.num_warmup_steps = 100
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+Trainer.eval_method = "pplx"
+Trainer.eval_max_batches = 50
+
+create_data_loader.num_workers = 2
+
+hstu_encoder.num_blocks = 16
+hstu_encoder.num_heads = 4
+hstu_encoder.dqk = 32
+hstu_encoder.dv = 32
+hstu_encoder.linear_dropout_rate = 0.2
