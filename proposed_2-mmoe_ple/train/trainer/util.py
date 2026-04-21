@@ -87,6 +87,12 @@ def make_model(
     expert_hidden_dim: int = 128,
     num_task_experts: int = 2,
     num_shared_experts: int = 2,
+    mmoe_expert_type: str = "mlp",  # mlp | transformer
+    mmoe_transformer_layers: int = 2,
+    mmoe_transformer_heads: int = 4,
+    mmoe_transformer_ffn_multiplier: int = 4,
+    mmoe_gate_hidden_dim: int = 0,
+    enable_next_event_type_leakage: bool = False,
 ) -> torch.nn.Module:
     """
     Create and return the model for training.
@@ -121,6 +127,12 @@ def make_model(
         expert_hidden_dim=expert_hidden_dim,
         num_task_experts=num_task_experts,
         num_shared_experts=num_shared_experts,
+        mmoe_expert_type=mmoe_expert_type,
+        mmoe_transformer_layers=mmoe_transformer_layers,
+        mmoe_transformer_heads=mmoe_transformer_heads,
+        mmoe_transformer_ffn_multiplier=mmoe_transformer_ffn_multiplier,
+        mmoe_gate_hidden_dim=mmoe_gate_hidden_dim,
+        enable_next_event_type_leakage=enable_next_event_type_leakage,
         )
     return model
 
@@ -161,6 +173,12 @@ class SequentialRetrieval(torch.nn.Module):
             expert_hidden_dim: int = 128,
             num_task_experts: int = 2,  # PLE only: per-task experts
             num_shared_experts: int = 2,  # PLE only: shared experts
+            mmoe_expert_type: str = "mlp",  # mlp | transformer
+            mmoe_transformer_layers: int = 2,
+            mmoe_transformer_heads: int = 4,
+            mmoe_transformer_ffn_multiplier: int = 4,
+            mmoe_gate_hidden_dim: int = 0,
+            enable_next_event_type_leakage: bool = False,
             ) -> None:
         super().__init__()
 
@@ -205,6 +223,12 @@ class SequentialRetrieval(torch.nn.Module):
         self.expert_hidden_dim = expert_hidden_dim
         self.num_task_experts = num_task_experts
         self.num_shared_experts = num_shared_experts
+        self.mmoe_expert_type = mmoe_expert_type
+        self.mmoe_transformer_layers = mmoe_transformer_layers
+        self.mmoe_transformer_heads = mmoe_transformer_heads
+        self.mmoe_transformer_ffn_multiplier = mmoe_transformer_ffn_multiplier
+        self.mmoe_gate_hidden_dim = mmoe_gate_hidden_dim
+        self.enable_next_event_type_leakage = enable_next_event_type_leakage
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -220,8 +244,16 @@ class SequentialRetrieval(torch.nn.Module):
                 output_dim=self.model_hidden_size,
                 task_ids=task_ids,
                 dropout=self.dropout_rate,
+                expert_type=self.mmoe_expert_type,
+                transformer_layers=self.mmoe_transformer_layers,
+                transformer_heads=self.mmoe_transformer_heads,
+                transformer_ffn_multiplier=self.mmoe_transformer_ffn_multiplier,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
             )
-            logging.info(f"MMoE module: {self.num_experts} experts, tasks={task_ids}")
+            logging.info(
+                f"MMoE module: experts={self.num_experts}, type={self.mmoe_expert_type}, "
+                f"layers={self.mmoe_transformer_layers}, heads={self.mmoe_transformer_heads}, tasks={task_ids}"
+            )
         elif self.multi_task_module_type == "ple":
             task_ids = self.supervision_train_domains or [0]
             self.multi_task_module = PLE(
@@ -234,6 +266,9 @@ class SequentialRetrieval(torch.nn.Module):
                 dropout=self.dropout_rate,
             )
             logging.info(f"PLE module: {self.num_shared_experts} shared + {self.num_task_experts} task experts, tasks={task_ids}")
+
+        if self.enable_next_event_type_leakage:
+            logging.warning("[Option-E] next-event type leakage is ENABLED for conditioning.")
 
     def setup(self) -> Tuple[torch.nn.Module, torch.nn.Module, torch.nn.Module, str, str, str, str]:
         """

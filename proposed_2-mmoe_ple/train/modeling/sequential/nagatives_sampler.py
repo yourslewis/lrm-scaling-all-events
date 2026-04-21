@@ -332,7 +332,7 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
                     dtype=positive_ids.dtype,
                 )
                 encoded_neg_ids = pool_id * self.domain_offset + neg_ids
-                neg_embs = self.normalize_embeddings(self._item_emb(raw_embeddings[neg_ids%self.shard_size].to(dtype=torch.float32, device=device)))  # [K, D]
+                neg_embs = self.normalize_embeddings(self._item_emb(raw_embeddings[torch.clamp(neg_ids, max=raw_embeddings.shape[0]-1)].to(dtype=torch.float32, device=device)))  # [K, D]
 
                 encoded_neg_ids_list.append(encoded_neg_ids.to(device))
                 neg_embs_list.append(neg_embs)

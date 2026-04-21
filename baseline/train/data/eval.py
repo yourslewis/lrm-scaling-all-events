@@ -291,10 +291,16 @@ def add_to_summary_writer(
     batch_id: int,
     metrics: Dict[str, torch.Tensor],
     prefix: str,
+    rank: int = 0,
+    world_size: int = 1,
 ) -> None:
     for key, value in metrics.items():
         if writer is not None:
-            writer.add_scalar(f"{prefix}/{key}", value, batch_id)
+            if isinstance(value, torch.Tensor) and value.dim() == 0:
+                writer.add_scalar(f"{prefix}/{key}", value.item(), batch_id)
+            elif isinstance(value, (int, float)):
+                writer.add_scalar(f"{prefix}/{key}", value, batch_id)
+            # skip non-scalar tensors (e.g. label_type_ids)
 
 
 @torch.inference_mode  # pyre-ignore [56]
@@ -331,6 +337,14 @@ def eval_metrics_v3_from_tensors(
         user_ids=user_ids,
     )
     metrics["log_pplx"] = loss.detach()
+
+    # Return label type ids for per-group evaluation
+    if type_ids is not None:
+        label_type_ids = type_ids[:, 1:]  # [B, N-1] — type of next event at each position
+        # For retrieval: type of last event
+        last_label_type = type_ids[torch.arange(type_ids.size(0)), lengths - 1]  # [B]
+        metrics["label_type_ids"] = label_type_ids
+        metrics["last_label_type"] = last_label_type
 
     # eval recall metrics
     new_input_ids = input_ids[:, :-1]                                                                                              # [B, N-1]

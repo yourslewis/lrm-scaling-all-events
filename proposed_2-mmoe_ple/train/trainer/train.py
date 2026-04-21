@@ -160,6 +160,9 @@ class Trainer:
         self.ddp_setup()
 
         collate_fn = CollateFn(
+            input_dim=self.dataset.embd_dim,
+            output_dim=128,  # not used in collate, only proj
+            shard_size=self.dataset.shard_size,
             device=self.device,
             domain_to_item_id_range=self.dataset.domain_to_item_id_range,
             precomputed_embeddings_domain_to_dir=self.model.precomputed_embeddings_domain_to_dir,
@@ -206,7 +209,11 @@ class Trainer:
         if self.main_module_bf16:                                 # default to be False
             self.model = self.model.to(torch.bfloat16)
         self.model = self.model.to(self.device)
-        self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True)
+        if self.world_size > 1:
+            self.model = DDP(self.model, device_ids=[self.local_rank], find_unused_parameters=True, static_graph=False)
+        # For single-GPU, skip DDP wrapper entirely
+        self._use_ddp = (self.world_size > 1)
+        self._model_unwrapped = self.model.module if self._use_ddp else self.model
 
         date_str = date.today().strftime("%Y-%m-%d")
         model_subfolder = f"{self.dataset.dataset_name}-l{self.dataset.max_sequence_length}"
@@ -257,7 +264,11 @@ class Trainer:
                 raw_label_embeddings     = raw_input_embeddings[:, 1:, :]    # [B, N-1, D]
                 new_ratings = ratings                                # ignore ratings for now
                 new_timestamps = timestamps[:, :-1]                          # [B, N-1]
-                new_type_ids = type_ids[:, :-1] if type_ids is not None else None  # [B, N-1]
+                leak_next_type = bool(getattr(self._model_unwrapped, "enable_next_event_type_leakage", False))
+                if type_ids is not None:
+                    new_type_ids = type_ids[:, 1:] if leak_next_type else type_ids[:, :-1]
+                else:
+                    new_type_ids = None
                 new_lengths = lengths - 1                                    # [B]
 
                 # print(f"new input ids shape: {new_input_ids.shape}")
@@ -270,7 +281,7 @@ class Trainer:
                         self._save_snapshot(batch_id)
 
                     logging.info("rotating negatives sampler")
-                    self.model.module.negatives_sampler['eval'].rotate()
+                    self._model_unwrapped.negatives_sampler['eval'].rotate()
 
                     logging.info(f"running evaluation (method={self.eval_method})")
                     torch.cuda.synchronize()
@@ -360,6 +371,7 @@ class Trainer:
                 params, lr=self.learning_rate,
                 betas=self.optimizer_betas,
                 weight_decay=self.weight_decay,
+                foreach=False,
             )
         elif self.optimizer_type == "Adam":
             return torch.optim.Adam(
@@ -380,7 +392,7 @@ class Trainer:
         self.model.eval()
 
         eval_state = get_eval_state_v2(
-            model=self.model.module,
+            model=self._model_unwrapped,
             top_k_method=self.top_k_method,
         )
 
@@ -400,7 +412,7 @@ class Trainer:
 
             eval_dict = eval_metrics_v3_from_tensors(
                 eval_state,
-                self.model.module,
+                self._model_unwrapped,
                 input_ids,
                 raw_input_embeddings,
                 ratings,
@@ -408,6 +420,7 @@ class Trainer:
                 lengths,
                 user_id,
                 type_ids=type_ids,
+                leak_next_type_ids=bool(getattr(self._model_unwrapped, "enable_next_event_type_leakage", False)),
             )
 
             for k, v in eval_dict.items():
@@ -492,7 +505,7 @@ class Trainer:
 
         # logging.info("start get eval state")
         eval_state = get_eval_state(
-            model=self.model.module,
+            model=self._model_unwrapped,
             item_id_range=item_id_range,
             top_k_method=self.top_k_method,
             domain_id=domain_id,
@@ -514,7 +527,7 @@ class Trainer:
 
             eval_dict = eval_metrics_v2_from_tensors(
                 eval_state,
-                self.model.module.model,
+                self._model_unwrapped.model,
                 input,
                 raw_input_embedding,
                 ratings,
@@ -570,11 +583,11 @@ class Trainer:
         self.model.eval()
 
         eval_state = get_eval_state(
-            model=self.model.module,
+            model=self._model_unwrapped,
             item_id_range=self.dataset.domain_to_item_id_range[0],
             top_k_method=self.top_k_method,
             domain_id=0,
-            num_shards=self.model.module.model._embedding_module.domain_shard_counts[0],
+            num_shards=self._model_unwrapped.model._embedding_module.domain_shard_counts[0],
             device=self.device,
             float_dtype=torch.bfloat16 if self.main_module_bf16 else None,
         )
@@ -591,7 +604,7 @@ class Trainer:
 
             eval_dict = eval_metrics_v2_from_tensors(
                 eval_state,
-                self.model.module.model,
+                self._model_unwrapped.model,
                 input,
                 ratings,
                 label,
@@ -643,7 +656,7 @@ class Trainer:
             return
             
         snapshot = {
-            "MODEL_STATE": self.model.module.state_dict(),
+            "MODEL_STATE": self._model_unwrapped.state_dict(),
             "OPTIMIZER_STATE": self.opt.state_dict(),
             "BATCHES_RUN": batch_id,
         }

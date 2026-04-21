@@ -308,6 +308,7 @@ def eval_metrics_v3_from_tensors(
     lengths: torch.Tensor,     
     user_ids,
     type_ids: torch.Tensor = None,
+    leak_next_type_ids: bool = False,
 ) -> Dict[str, Union[float, torch.Tensor]]: 
     
     new_input_ids = input_ids[:, :-1]                            # [B, N-1]
@@ -316,7 +317,10 @@ def eval_metrics_v3_from_tensors(
     raw_label_embeddings     = raw_input_embeddings[:, 1:, :]    # [B, N-1, D]
     new_ratings = ratings                                        # ignore ratings for now
     new_timestamps = timestamps[:, :-1]                          # [B, N-1]
-    new_type_ids = type_ids[:, :-1] if type_ids is not None else None  # [B, N-1]
+    if type_ids is not None:
+        new_type_ids = type_ids[:, 1:] if leak_next_type_ids else type_ids[:, :-1]
+    else:
+        new_type_ids = None
     new_lengths = lengths - 1                                    # [B]
 
     logits, loss, metrics = model(

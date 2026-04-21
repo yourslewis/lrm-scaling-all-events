@@ -422,18 +422,64 @@ class Trainer:
             v_tensor_list = [t.unsqueeze(0) if t.dim() == 0 else t for t in v_list]
             eval_dict_all[k] = torch.cat(v_tensor_list, dim=-1)  # shape [N]
 
-        # Average across ranks
-        # logging.info(f"eval_dict len: {len(eval_dict_all)}")
+        # ── Per-event-group metric aggregation ──
+        # Extract label_type_ids before averaging
+        last_label_types = eval_dict_all.pop("last_label_type", None)  # [total_eval_samples]
+        label_type_ids_all = eval_dict_all.pop("label_type_ids", None)  # not used for retrieval grouping
+
+        # Average across ranks (overall)
         final_metrics = {
             k: _avg(v, rank=self.rank, world_size=self.world_size)
             for k, v in eval_dict_all.items()
         }
-        # logging.info("done with cross-rank avg")
 
-    
+        # Per-group metrics (retrieval: ndcg/hr/mrr grouped by last label event type)
+        GROUP_MAP = {
+            1: "Ad", 2: "Ad",            # NativeClick, SearchClick
+            3: "Browsing", 6: "Browsing", 9: "Browsing",  # EdgePageTitle, UET, UETShoppingView
+            4: "Search", 5: "Search",    # EdgeSearchQuery, OrganicSearchQuery
+            8: "Purchase", 10: "Purchase", 11: "Purchase", 12: "Purchase",  # UETShoppingCart, AbandonCart, EdgeShoppingCart, EdgeShoppingPurchase
+            7: "Others",                 # OutlookSenderDomain
+        }
+        EVENT_TYPE_NAMES = {
+            0: "UNK", 1: "NativeClick", 2: "SearchClick", 3: "EdgePageTitle",
+            4: "EdgeSearchQuery", 5: "OrganicSearchQuery", 6: "UET",
+            7: "OutlookSenderDomain", 8: "UETShoppingCart", 9: "UETShoppingView",
+            10: "AbandonCart", 11: "EdgeShoppingCart", 12: "EdgeShoppingPurchase",
+        }
+        retrieval_keys = ["ndcg_10", "hr_10", "mrr"]
+
+        if last_label_types is not None and self.rank == 0:
+            for group_name in ["Ad", "Browsing", "Search", "Purchase", "Others"]:
+                group_type_ids = [tid for tid, g in GROUP_MAP.items() if g == group_name]
+                mask = torch.zeros(last_label_types.size(0), dtype=torch.bool, device=last_label_types.device)
+                for tid in group_type_ids:
+                    mask |= (last_label_types == tid)
+                count = mask.sum().item()
+                if count == 0:
+                    continue
+                for k in retrieval_keys:
+                    if k in eval_dict_all:
+                        val = eval_dict_all[k][mask].float().mean().item()
+                        final_metrics[f"{k}/{group_name}"] = val
+                final_metrics[f"count/{group_name}"] = count
+
+            # Also per individual event type
+            for tid, tname in EVENT_TYPE_NAMES.items():
+                if tid == 0:
+                    continue
+                mask = (last_label_types == tid)
+                count = mask.sum().item()
+                if count == 0:
+                    continue
+                for k in retrieval_keys:
+                    if k in eval_dict_all:
+                        val = eval_dict_all[k][mask].float().mean().item()
+                        final_metrics[f"{k}/etype_{tname}"] = val
+                final_metrics[f"count/etype_{tname}"] = count
+
         # Write logs from rank 0 only
         if self.rank == 0:
-            # logging.info(f"rank {self.rank}: write metrics to log")
             add_to_summary_writer(
                 self.writer,
                 batch_id=train_batch_id,
@@ -441,11 +487,16 @@ class Trainer:
                 prefix="eval_iter",
             )
 
+            # Log scalar metrics
+            scalar_str = ", ".join(
+                f"{k} {v.item() if isinstance(v, torch.Tensor) else v:.4f}"
+                for k, v in final_metrics.items()
+                if not k.startswith("count/")
+            )
             logging.info(
                 f"rank {self.rank}: eval @ 'eval iteration' {train_batch_id} "
                 f"'train_iteration' {train_batch_id} 'epoch' {train_epoch} "
-                f"in {time.time() - eval_start_time:.2f}s: "
-                + ", ".join(f"{k} {final_metrics[k].item():.4f}" for k in final_metrics)
+                f"in {time.time() - eval_start_time:.2f}s: {scalar_str}"
         )
 
 

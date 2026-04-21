@@ -205,6 +205,52 @@ def get_reco_dataset(
             train_dataset=train_dataset,
             eval_dataset=eval_dataset,
         )
+    elif dataset_name == "benchmarkv4_all_events_v2":
+        if experiment_name == "semantic_next_event_prediction":
+            local_fs = fsspec.filesystem('file')
+            train_dataset = semantic_next_event_prediction.TrainIterableDataset(local_fs, os.path.join(prefix, "train"), max_sequence_length, rank, world_size)
+            eval_dataset = semantic_next_event_prediction.EvalIterableDataset(local_fs, os.path.join(prefix, "eval"), max_sequence_length, rank, world_size)
+        else:
+            raise ValueError(f"Unknown experiment {experiment_name} for dataset {dataset_name}")
+        return RecoDataset(
+            dataset_name=dataset_name,
+            max_sequence_length=max_sequence_length,
+            domain_to_item_id_range={
+                0: (20, 830_986),
+                1: (20, 33_693_769),
+                2: (20, 7_940_233),
+                3: (20, 791_639),
+                4: (20, 242_592),
+            },
+            embd_dim=384,
+            domain_offset=1_000_000_000,
+            shard_size=34_000_000,
+            shard_counts={0: 1, 1: 1, 2: 1, 3: 1, 4: 1},
+            num_event_types=len(semantic_next_event_prediction.EVENT_TYPE_DICT),
+            positional_sampling_ratio=positional_sampling_ratio,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+        )
+    elif dataset_name == "benchmarkv4_ads_only_v2":
+        if experiment_name == "semantic_next_event_prediction":
+            local_fs = fsspec.filesystem('file')
+            train_dataset = semantic_next_event_prediction.TrainIterableDataset(local_fs, os.path.join(prefix, "train"), max_sequence_length, rank, world_size)
+            eval_dataset = semantic_next_event_prediction.EvalIterableDataset(local_fs, os.path.join(prefix, "eval"), max_sequence_length, rank, world_size)
+        else:
+            raise ValueError(f"Unknown experiment {experiment_name} for dataset {dataset_name}")
+        return RecoDataset(
+            dataset_name=dataset_name,
+            max_sequence_length=max_sequence_length,
+            domain_to_item_id_range={0: (20, 830_986)},
+            embd_dim=384,
+            domain_offset=1_000_000_000,
+            shard_size=34_000_000,
+            shard_counts={0: 1},
+            num_event_types=len(semantic_next_event_prediction.EVENT_TYPE_DICT),
+            positional_sampling_ratio=positional_sampling_ratio,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+        )
     elif dataset_name == "ml-1m":
         dp = get_common_preprocessors()[dataset_name]
         train_dataset = DatasetV2(

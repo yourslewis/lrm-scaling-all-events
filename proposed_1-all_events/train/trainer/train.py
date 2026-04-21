@@ -160,6 +160,9 @@ class Trainer:
         self.ddp_setup()
 
         collate_fn = CollateFn(
+            input_dim=self.dataset.embd_dim,
+            output_dim=128,  # not used in collate, only proj
+            shard_size=self.dataset.shard_size,
             device=self.device,
             domain_to_item_id_range=self.dataset.domain_to_item_id_range,
             precomputed_embeddings_domain_to_dir=self.model.precomputed_embeddings_domain_to_dir,
