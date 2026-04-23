@@ -253,7 +253,7 @@ class Trainer:
                 user_id = row["user_id"]
                 input_ids = row["input_ids"].to(self.device, non_blocking=True)                                                    # [B, N]
                 raw_input_embeddings = row["raw_input_embeddings"].to(dtype=torch.float32, device=self.device, non_blocking=True)  # [B, N, D]
-                ratings = row["ratings"].to(self.device, non_blocking=True)                                                        # [B, N]
+                ratings = row["ratings"].to(self.device, non_blocking=True)
                 timestamps = row["timestamps"].to(self.device, non_blocking=True)                                                  # [B, N]
                 type_ids = row["type_ids"].to(self.device, non_blocking=True) if "type_ids" in row else None                           # [B, N]
                 lengths = row["lengths"].to(self.device, non_blocking=True)                                                        # [B]
@@ -262,7 +262,13 @@ class Trainer:
                 label_ids     = input_ids[:, 1:]                             # [B, N-1]
                 new_raw_input_embeddings = raw_input_embeddings[:, :-1, :]   # [B, N-1, D]
                 raw_label_embeddings     = raw_input_embeddings[:, 1:, :]    # [B, N-1, D]
-                new_ratings = ratings                                # ignore ratings for now
+                # Ratings are intentionally not sliced here because they are batch-shaped
+                # metadata, not sequence-shaped payloads like input_ids/timestamps/type_ids.
+                assert ratings.dim() == 1 and ratings.size(0) == input_ids.size(0), (
+                    f"Expected batch-shaped ratings [B], got {tuple(ratings.shape)}. "
+                    "If ratings becomes sequence-shaped, slice it alongside the other sequence payloads."
+                )
+                new_ratings = ratings
                 new_timestamps = timestamps[:, :-1]                          # [B, N-1]
                 leak_next_type = bool(getattr(self._model_unwrapped, "enable_next_event_type_leakage", False))
                 if type_ids is not None:
@@ -294,8 +300,8 @@ class Trainer:
                     
                     self.model.train()
 
-                # Compute label_type_ids for proposed7 (next-event type conditioning)
-                label_type_ids = type_ids[:, 1:] if type_ids is not None else None  # [B, N-1]
+                # next_type_ids are the next-event type labels used by proposed7 conditioning.
+                next_type_ids = type_ids[:, 1:] if type_ids is not None else None  # [B, N-1]
 
                 self.opt.zero_grad()
                 logits, loss, metrics = self.model(
@@ -306,7 +312,7 @@ class Trainer:
                     raw_label_embeddings=raw_label_embeddings,
                     ratings=new_ratings,
                     type_ids=new_type_ids,
-                    label_type_ids=label_type_ids,
+                    next_type_ids=next_type_ids,
                     timestamps=new_timestamps,
                     user_ids=user_id,
                 )

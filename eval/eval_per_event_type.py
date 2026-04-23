@@ -54,21 +54,7 @@ from data.ads_datasets.collate import CollateFn
 from trainer.util import make_model
 from trainer.data_loader import create_data_loader
 from indexing.utils import get_top_k_module
-
-# ---------- EVENT TYPE MAPS ----------
-EVENT_TYPE_NAMES = {
-    0: "UNK", 1: "NativeClick", 2: "SearchClick", 3: "EdgePageTitle",
-    4: "EdgeSearchQuery", 5: "OrganicSearchQuery", 6: "UET",
-    7: "OutlookSenderDomain", 8: "UETShoppingCart", 9: "UETShoppingView",
-    10: "AbandonCart", 11: "EdgeShoppingCart", 12: "EdgeShoppingPurchase",
-}
-GROUP_MAP = {
-    1: "Ad", 2: "Ad",
-    3: "Browsing", 6: "Browsing", 9: "Browsing",
-    4: "Search", 5: "Search",
-    8: "Purchase", 10: "Purchase", 11: "Purchase", 12: "Purchase",
-    7: "Others",
-}
+from event_types import EVENT_TYPE_NAMES, GROUP_MAP
 
 
 def delete_flags(FLAGS, keys):

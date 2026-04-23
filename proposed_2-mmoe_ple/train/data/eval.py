@@ -315,7 +315,13 @@ def eval_metrics_v3_from_tensors(
     label_ids     = input_ids[:, 1:]                             # [B, N-1]
     new_raw_input_embeddings = raw_input_embeddings[:, :-1, :]   # [B, N-1, D]
     raw_label_embeddings     = raw_input_embeddings[:, 1:, :]    # [B, N-1, D]
-    new_ratings = ratings                                        # ignore ratings for now
+    # Ratings are intentionally not sliced here because they are batch-shaped
+    # metadata, not sequence-shaped payloads like input_ids/timestamps/type_ids.
+    assert ratings.dim() == 1 and ratings.size(0) == input_ids.size(0), (
+        f"Expected batch-shaped ratings [B], got {tuple(ratings.shape)}. "
+        "If ratings becomes sequence-shaped, slice it alongside the other sequence payloads."
+    )
+    new_ratings = ratings
     new_timestamps = timestamps[:, :-1]                          # [B, N-1]
     if type_ids is not None:
         new_type_ids = type_ids[:, 1:] if leak_next_type_ids else type_ids[:, :-1]
@@ -323,8 +329,8 @@ def eval_metrics_v3_from_tensors(
         new_type_ids = None
     new_lengths = lengths - 1                                    # [B]
 
-    # label_type_ids: next-event type IDs for proposed7 conditioning
-    label_type_ids = type_ids[:, 1:] if type_ids is not None else None  # [B, N-1]
+    # next_type_ids are the next-event type labels used by proposed7 conditioning.
+    next_type_ids = type_ids[:, 1:] if type_ids is not None else None  # [B, N-1]
 
     logits, loss, metrics = model(
         input_ids=new_input_ids,
@@ -334,7 +340,7 @@ def eval_metrics_v3_from_tensors(
         raw_label_embeddings=raw_label_embeddings,
         ratings=new_ratings,
         type_ids=new_type_ids,
-        label_type_ids=label_type_ids,
+        next_type_ids=next_type_ids,
         timestamps=new_timestamps,
         user_ids=user_ids,
     )

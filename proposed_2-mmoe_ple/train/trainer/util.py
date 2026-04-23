@@ -568,7 +568,7 @@ class SequentialRetrieval(torch.nn.Module):
         raw_label_embeddings: torch.Tensor,
         ratings: torch.Tensor = None,
         type_ids: torch.Tensor = None,
-        label_type_ids: torch.Tensor = None,  # next-event type IDs for proposed7
+        next_type_ids: torch.Tensor = None,  # next-event type IDs for proposed7
         timestamps: torch.Tensor = None,
         user_ids: torch.Tensor = None,   
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -625,8 +625,8 @@ class SequentialRetrieval(torch.nn.Module):
             
             for task_id, task_emb in task_embeddings.items():
                 # Proposed7: condition task embedding on next-event type
-                if self.event_type_conditioner is not None and label_type_ids is not None:
-                    task_emb = self.event_type_conditioner(task_emb, label_type_ids)
+                if self.event_type_conditioner is not None and next_type_ids is not None:
+                    task_emb = self.event_type_conditioner(task_emb, next_type_ids)
 
                 # Build domain mask for this task
                 if task_id == 0:
@@ -667,8 +667,8 @@ class SequentialRetrieval(torch.nn.Module):
             # For eval, use task 0 (ads) embeddings
             eval_embeddings = task_embeddings.get(0, seq_embeddings)
             # Proposed7: condition eval embeddings too
-            if self.event_type_conditioner is not None and label_type_ids is not None:
-                eval_embeddings = self.event_type_conditioner(eval_embeddings, label_type_ids)
+            if self.event_type_conditioner is not None and next_type_ids is not None:
+                eval_embeddings = self.event_type_conditioner(eval_embeddings, next_type_ids)
             return eval_embeddings, total_loss, all_metrics
 
         # --- Standard single-task path (same as P1) ---
@@ -702,8 +702,8 @@ class SequentialRetrieval(torch.nn.Module):
             supervision_weights = keep_last_nonzero(supervision_weights)
 
         # Proposed7: condition on next-event type (single-task path)
-        if self.event_type_conditioner is not None and label_type_ids is not None:
-            seq_embeddings = self.event_type_conditioner(seq_embeddings, label_type_ids)
+        if self.event_type_conditioner is not None and next_type_ids is not None:
+            seq_embeddings = self.event_type_conditioner(seq_embeddings, next_type_ids)
 
         loss, aux_losses, metrics = self.ar_loss(
             lengths=input_lengths,  # [B],
