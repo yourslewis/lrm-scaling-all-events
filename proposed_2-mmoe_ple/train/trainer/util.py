@@ -1,11 +1,47 @@
 import gin
 import torch
+import torch.nn as nn
 import logging
 
 from modeling.sequential.autoregressive_losses import (
     BCELoss,
 )
-from modeling.sequential.mmoe_ple import MMoE, PLE
+from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE
+
+
+class EventTypeConditioner(torch.nn.Module):
+    """Proposed7: Condition output embeddings on next-event type.
+    
+    Takes HSTU seq_embeddings and next-event type IDs, produces
+    type-conditioned output embeddings via concat + MLP.
+    
+    This does NOT modify the HSTU encoder — it only conditions
+    the output embedding used for retrieval/loss.
+    """
+    def __init__(self, input_dim: int, event_type_dim: int, num_event_types: int, output_dim: int, dropout: float = 0.1):
+        super().__init__()
+        self.event_type_emb = nn.Embedding(num_event_types + 1, event_type_dim, padding_idx=0)
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim + event_type_dim, input_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(input_dim, output_dim),
+        )
+        # Initialize event type embedding
+        nn.init.xavier_normal_(self.event_type_emb.weight)
+
+    def forward(self, seq_embeddings: torch.Tensor, next_type_ids: torch.Tensor) -> torch.Tensor:
+        """Condition seq_embeddings on next event type.
+        
+        Args:
+            seq_embeddings: [B, N, D] from HSTU
+            next_type_ids: [B, N] next-event type IDs (already shifted)
+        Returns:
+            conditioned_embeddings: [B, N, D]
+        """
+        type_emb = self.event_type_emb(next_type_ids.int())  # [B, N, E]
+        concat = torch.cat([seq_embeddings, type_emb], dim=-1)  # [B, N, D+E]
+        return self.mlp(concat)  # [B, N, D]
 
 from modeling.sequential.nagatives_sampler import (
     InBatchNegativesSampler,
@@ -93,6 +129,10 @@ def make_model(
     mmoe_transformer_ffn_multiplier: int = 4,
     mmoe_gate_hidden_dim: int = 0,
     enable_next_event_type_leakage: bool = False,
+    enable_output_event_type_conditioning: bool = False,  # proposed7
+    event_type_conditioning_dim: int = 32,  # proposed7: event type embedding dim
+    hstu_expert_num_blocks: int = 16,  # for hstu_mmoe: blocks per expert HSTU
+    hstu_gate_num_blocks: int = 4,     # for hstu_mmoe: blocks for gate HSTU (lighter)
 ) -> torch.nn.Module:
     """
     Create and return the model for training.
@@ -133,6 +173,10 @@ def make_model(
         mmoe_transformer_ffn_multiplier=mmoe_transformer_ffn_multiplier,
         mmoe_gate_hidden_dim=mmoe_gate_hidden_dim,
         enable_next_event_type_leakage=enable_next_event_type_leakage,
+        enable_output_event_type_conditioning=enable_output_event_type_conditioning,
+        event_type_conditioning_dim=event_type_conditioning_dim,
+        hstu_expert_num_blocks=hstu_expert_num_blocks,
+        hstu_gate_num_blocks=hstu_gate_num_blocks,
         )
     return model
 
@@ -179,6 +223,10 @@ class SequentialRetrieval(torch.nn.Module):
             mmoe_transformer_ffn_multiplier: int = 4,
             mmoe_gate_hidden_dim: int = 0,
             enable_next_event_type_leakage: bool = False,
+            enable_output_event_type_conditioning: bool = False,
+            event_type_conditioning_dim: int = 32,
+            hstu_expert_num_blocks: int = 16,
+            hstu_gate_num_blocks: int = 4,
             ) -> None:
         super().__init__()
 
@@ -229,6 +277,10 @@ class SequentialRetrieval(torch.nn.Module):
         self.mmoe_transformer_ffn_multiplier = mmoe_transformer_ffn_multiplier
         self.mmoe_gate_hidden_dim = mmoe_gate_hidden_dim
         self.enable_next_event_type_leakage = enable_next_event_type_leakage
+        self.enable_output_event_type_conditioning = enable_output_event_type_conditioning
+        self.event_type_conditioning_dim = event_type_conditioning_dim
+        self.hstu_expert_num_blocks = hstu_expert_num_blocks
+        self.hstu_gate_num_blocks = hstu_gate_num_blocks
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -266,9 +318,56 @@ class SequentialRetrieval(torch.nn.Module):
                 dropout=self.dropout_rate,
             )
             logging.info(f"PLE module: {self.num_shared_experts} shared + {self.num_task_experts} task experts, tasks={task_ids}")
+        elif self.multi_task_module_type == "hstu_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            # Build N independent HSTU expert encoders
+            # They share the embedding module but have independent HSTU weights
+            self.expert_hstu_models = nn.ModuleList()
+            for i in range(self.num_experts):
+                expert_encoder = get_sequential_encoder(
+                    module_type=self.main_module,
+                    max_sequence_length=self.max_sequence_length,
+                    max_output_length=0,
+                    embedding_module=self.model._embedding_module,  # share embedding module
+                    interaction_module=self.model._ndp_module,
+                    input_preproc_module=self.model._input_features_preproc,  # share input preproc
+                    output_postproc_module=self.model._output_postproc,
+                    verbose=False,
+                    activation_checkpoint=False,
+                )
+                self.expert_hstu_models.append(expert_encoder)
+            logging.info(
+                f"HSTU-MMoE: {self.num_experts} independent HSTU expert encoders, "
+                f"gate on shared HSTU, tasks={task_ids}"
+            )
+            self.multi_task_module = HSTUMMoE(
+                gate_dim=self.model_hidden_size,
+                num_experts=self.num_experts,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                dropout=self.dropout_rate,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+            )
+            self.multi_task_module.set_expert_models(self.expert_hstu_models)
 
         if self.enable_next_event_type_leakage:
             logging.warning("[Option-E] next-event type leakage is ENABLED for conditioning.")
+
+        # Proposed7: output-level event type conditioning
+        self.event_type_conditioner = None
+        if self.enable_output_event_type_conditioning:
+            self.event_type_conditioner = EventTypeConditioner(
+                input_dim=self.model_hidden_size,
+                event_type_dim=self.event_type_conditioning_dim,
+                num_event_types=self.num_event_types,
+                output_dim=self.model_hidden_size,
+                dropout=self.dropout_rate,
+            )
+            logging.info(
+                f"[Proposed7] Output event-type conditioning ENABLED: "
+                f"event_type_dim={self.event_type_conditioning_dim}, "
+                f"num_event_types={self.num_event_types}"
+            )
 
     def setup(self) -> Tuple[torch.nn.Module, torch.nn.Module, torch.nn.Module, str, str, str, str]:
         """
@@ -469,6 +568,7 @@ class SequentialRetrieval(torch.nn.Module):
         raw_label_embeddings: torch.Tensor,
         ratings: torch.Tensor = None,
         type_ids: torch.Tensor = None,
+        label_type_ids: torch.Tensor = None,  # next-event type IDs for proposed7
         timestamps: torch.Tensor = None,
         user_ids: torch.Tensor = None,   
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -500,9 +600,24 @@ class SequentialRetrieval(torch.nn.Module):
             past_payloads={"timestamps": timestamps, "ratings": ratings, "type_ids": type_ids},
         )
 
+        # --- Proposed7: output event-type conditioning ---
+        if self.event_type_conditioner is not None and label_type_ids is not None:
+            seq_embeddings = self.event_type_conditioner(seq_embeddings, label_type_ids)
+
         # --- MMoE/PLE multi-task path ---
         if self.multi_task_module is not None:
-            task_embeddings = self.multi_task_module(seq_embeddings)  # Dict[task_id, (B, N, D)]
+            if isinstance(self.multi_task_module, HSTUMMoE):
+                # Option C: expert HSTUs need raw inputs
+                past_payloads = {"timestamps": timestamps, "ratings": ratings, "type_ids": type_ids}
+                task_embeddings = self.multi_task_module(
+                    gate_embeddings=seq_embeddings,
+                    past_lengths=input_lengths,
+                    past_ids=input_ids,
+                    past_embeddings=past_embeddings,
+                    past_payloads=past_payloads,
+                )
+            else:
+                task_embeddings = self.multi_task_module(seq_embeddings)  # Dict[task_id, (B, N, D)]
             
             total_loss = torch.tensor(0.0, device=seq_embeddings.device)
             all_metrics = {}

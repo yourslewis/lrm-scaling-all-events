@@ -323,6 +323,9 @@ def eval_metrics_v3_from_tensors(
         new_type_ids = None
     new_lengths = lengths - 1                                    # [B]
 
+    # label_type_ids: next-event type IDs for proposed7 conditioning
+    label_type_ids = type_ids[:, 1:] if type_ids is not None else None  # [B, N-1]
+
     logits, loss, metrics = model(
         input_ids=new_input_ids,
         raw_input_embeddings=new_raw_input_embeddings,
@@ -331,6 +334,7 @@ def eval_metrics_v3_from_tensors(
         raw_label_embeddings=raw_label_embeddings,
         ratings=new_ratings,
         type_ids=new_type_ids,
+        label_type_ids=label_type_ids,
         timestamps=new_timestamps,
         user_ids=user_ids,
     )

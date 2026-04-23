@@ -149,6 +149,105 @@ class MMoE(nn.Module):
         return task_outputs
 
 
+class HSTUMMoE(nn.Module):
+    """
+    Option C: Independent HSTU experts with a shared HSTU for gating.
+
+    Architecture:
+        - 1 shared (lighter) HSTU encodes the input → gate embeddings
+        - N independent (full) HSTU encoders each process raw input → expert embeddings
+        - Per-task gating networks combine expert outputs
+
+    Unlike MMoE (which puts MLP/transformer heads on top of a single shared HSTU),
+    here each expert is a full independent HSTU encoder that sees the raw input.
+
+    This module does NOT call the HSTU forward itself — it is given the
+    expert HSTU models at construction time and calls them during forward.
+
+    Input:  raw inputs (past_lengths, past_ids, past_embeddings, past_payloads)
+    Output: Dict[task_id, (B, N, D)] — task-specific embeddings
+    """
+
+    def __init__(
+        self,
+        gate_dim: int,
+        num_experts: int,
+        output_dim: int,
+        task_ids: List[int],
+        dropout: float = 0.1,
+        gate_hidden_dim: int = 0,
+    ):
+        super().__init__()
+        self.task_ids = task_ids
+        self.num_experts = num_experts
+        self.output_dim = output_dim
+        # Expert HSTU models are set externally via set_expert_models()
+        self.expert_models = None
+
+        # Per-task gating networks (operate on gate HSTU output)
+        if gate_hidden_dim and gate_hidden_dim > 0:
+            self.gates = nn.ModuleDict(
+                {
+                    str(tid): nn.Sequential(
+                        nn.Linear(gate_dim, gate_hidden_dim),
+                        nn.ReLU(),
+                        nn.Dropout(dropout),
+                        nn.Linear(gate_hidden_dim, num_experts),
+                    )
+                    for tid in task_ids
+                }
+            )
+        else:
+            self.gates = nn.ModuleDict(
+                {str(tid): nn.Linear(gate_dim, num_experts) for tid in task_ids}
+            )
+
+    def set_expert_models(self, expert_models: nn.ModuleList):
+        """Set the expert HSTU encoder models (called from SequentialRetrieval.__init__)."""
+        self.expert_models = expert_models
+
+    def forward(
+        self,
+        gate_embeddings: torch.Tensor,
+        past_lengths: torch.Tensor,
+        past_ids: torch.Tensor,
+        past_embeddings: torch.Tensor,
+        past_payloads: dict,
+    ) -> Dict[int, torch.Tensor]:
+        """
+        Args:
+            gate_embeddings: (B, N, D_gate) — output of the shared/gate HSTU
+            past_lengths, past_ids, past_embeddings, past_payloads: raw inputs
+                for each expert HSTU to encode independently
+        Returns:
+            Dict[task_id, (B, N, D)] — task-specific embeddings
+        """
+        assert self.expert_models is not None, "Expert models not set. Call set_expert_models() first."
+
+        # Each expert HSTU encodes the raw input independently
+        expert_outputs = torch.stack(
+            [
+                expert_hstu(
+                    past_lengths=past_lengths,
+                    past_ids=past_ids,
+                    past_embeddings=past_embeddings,
+                    past_payloads=past_payloads,
+                )
+                for expert_hstu in self.expert_models
+            ],
+            dim=-2,
+        )  # (B, N, num_experts, D)
+
+        task_outputs = {}
+        for tid in self.task_ids:
+            gate_logits = self.gates[str(tid)](gate_embeddings)  # (B, N, num_experts)
+            gate_weights = F.softmax(gate_logits, dim=-1)
+            task_out = (gate_weights.unsqueeze(-1) * expert_outputs).sum(dim=-2)
+            task_outputs[tid] = task_out
+
+        return task_outputs
+
+
 class PLE(nn.Module):
     """
     Progressive Layered Extraction (single extraction layer).

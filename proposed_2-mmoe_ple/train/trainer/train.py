@@ -294,6 +294,9 @@ class Trainer:
                     
                     self.model.train()
 
+                # Compute label_type_ids for proposed7 (next-event type conditioning)
+                label_type_ids = type_ids[:, 1:] if type_ids is not None else None  # [B, N-1]
+
                 self.opt.zero_grad()
                 logits, loss, metrics = self.model(
                     input_ids=new_input_ids,
@@ -303,6 +306,7 @@ class Trainer:
                     raw_label_embeddings=raw_label_embeddings,
                     ratings=new_ratings,
                     type_ids=new_type_ids,
+                    label_type_ids=label_type_ids,
                     timestamps=new_timestamps,
                     user_ids=user_id,
                 )
