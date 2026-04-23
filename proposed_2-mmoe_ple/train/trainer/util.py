@@ -661,6 +661,11 @@ class SequentialRetrieval(torch.nn.Module):
                 for k, v in task_metrics.items():
                     all_metrics[f"task{task_id}_{k}"] = v
             
+            # Log gate entropy diagnostics
+            if hasattr(self.multi_task_module, '_last_gate_entropy'):
+                for tid, entropy in self.multi_task_module._last_gate_entropy.items():
+                    all_metrics[f"gate{tid}_entropy"] = entropy
+            
             if num_tasks_with_loss > 0:
                 total_loss = total_loss / num_tasks_with_loss
             

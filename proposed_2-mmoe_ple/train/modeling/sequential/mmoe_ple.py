@@ -139,10 +139,14 @@ class MMoE(nn.Module):
         # expert_outputs: (B, N, num_experts, D_out)
 
         task_outputs = {}
+        self._last_gate_entropy = {}  # for diagnostics
         for tid in self.task_ids:
             gate_logits = self.gates[str(tid)](x)  # (B, N, num_experts)
             gate_weights = F.softmax(gate_logits, dim=-1)  # (B, N, num_experts)
-            # Weighted sum of experts: (B, N, num_experts, 1) * (B, N, num_experts, D_out) -> sum -> (B, N, D_out)
+            # Gate entropy: -sum(p * log(p)), averaged over batch and sequence
+            gate_entropy = -(gate_weights * (gate_weights + 1e-8).log()).sum(dim=-1).mean()
+            self._last_gate_entropy[tid] = gate_entropy.detach()
+            # Weighted sum of experts
             task_out = (gate_weights.unsqueeze(-1) * expert_outputs).sum(dim=-2)
             task_outputs[tid] = task_out
 
