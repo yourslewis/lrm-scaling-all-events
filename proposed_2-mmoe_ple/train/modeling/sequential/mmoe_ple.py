@@ -95,10 +95,14 @@ class MMoE(nn.Module):
         transformer_heads: int = 4,
         transformer_ffn_multiplier: int = 4,
         gate_hidden_dim: int = 0,
+        load_balance_alpha: float = 0.0,
+        router_z_beta: float = 0.0,
     ):
         super().__init__()
         self.task_ids = task_ids
         self.num_experts = num_experts
+        self.load_balance_alpha = load_balance_alpha
+        self.router_z_beta = router_z_beta
         self.expert_type = expert_type
 
         def build_expert() -> nn.Module:
@@ -140,15 +144,35 @@ class MMoE(nn.Module):
 
         task_outputs = {}
         self._last_gate_entropy = {}  # for diagnostics
+        gate_weights_per_task = {}
+        gate_logits_per_task = {}
         for tid in self.task_ids:
             gate_logits = self.gates[str(tid)](x)  # (B, N, num_experts)
             gate_weights = F.softmax(gate_logits, dim=-1)  # (B, N, num_experts)
+            gate_logits_per_task[tid] = gate_logits
+            gate_weights_per_task[tid] = gate_weights
             # Gate entropy: -sum(p * log(p)), averaged over batch and sequence
             gate_entropy = -(gate_weights * (gate_weights + 1e-8).log()).sum(dim=-1).mean()
             self._last_gate_entropy[tid] = gate_entropy.detach()
             # Weighted sum of experts
             task_out = (gate_weights.unsqueeze(-1) * expert_outputs).sum(dim=-2)
             task_outputs[tid] = task_out
+
+        # Load balancing loss (Switch Transformer)
+        if self.load_balance_alpha > 0:
+            all_gate_weights = torch.stack([gate_weights_per_task[tid] for tid in self.task_ids])
+            f = all_gate_weights.mean(dim=[0, 1, 2])  # mean fraction per expert
+            P = all_gate_weights.mean(dim=[0, 1, 2])  # (same for soft routing)
+            self._load_balance_loss = self.num_experts * (f * P).sum()
+        else:
+            self._load_balance_loss = torch.tensor(0.0, device=x.device)
+
+        # Router z-loss (ST-MoE)
+        if self.router_z_beta > 0:
+            all_logits = torch.stack([gate_logits_per_task[tid] for tid in self.task_ids])
+            self._router_z_loss = torch.logsumexp(all_logits, dim=-1).square().mean()
+        else:
+            self._router_z_loss = torch.tensor(0.0, device=x.device)
 
         return task_outputs
 
@@ -180,10 +204,14 @@ class HSTUMMoE(nn.Module):
         task_ids: List[int],
         dropout: float = 0.1,
         gate_hidden_dim: int = 0,
+        load_balance_alpha: float = 0.0,
+        router_z_beta: float = 0.0,
     ):
         super().__init__()
         self.task_ids = task_ids
         self.num_experts = num_experts
+        self.load_balance_alpha = load_balance_alpha
+        self.router_z_beta = router_z_beta
         self.output_dim = output_dim
         # Expert HSTU models are set externally via set_expert_models()
         self.expert_models = None
