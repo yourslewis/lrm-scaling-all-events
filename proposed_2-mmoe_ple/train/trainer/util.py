@@ -133,6 +133,8 @@ def make_model(
     event_type_conditioning_dim: int = 32,  # proposed7: event type embedding dim
     hstu_expert_num_blocks: int = 16,  # for hstu_mmoe: blocks per expert HSTU
     hstu_gate_num_blocks: int = 4,     # for hstu_mmoe: blocks for gate HSTU (lighter)
+    load_balance_alpha: float = 0.0,
+    router_z_beta: float = 0.0,
 ) -> torch.nn.Module:
     """
     Create and return the model for training.
@@ -177,6 +179,8 @@ def make_model(
         event_type_conditioning_dim=event_type_conditioning_dim,
         hstu_expert_num_blocks=hstu_expert_num_blocks,
         hstu_gate_num_blocks=hstu_gate_num_blocks,
+        load_balance_alpha=load_balance_alpha,
+        router_z_beta=router_z_beta,
         )
     return model
 
@@ -227,6 +231,8 @@ class SequentialRetrieval(torch.nn.Module):
             event_type_conditioning_dim: int = 32,
             hstu_expert_num_blocks: int = 16,
             hstu_gate_num_blocks: int = 4,
+            load_balance_alpha: float = 0.0,
+            router_z_beta: float = 0.0,
             ) -> None:
         super().__init__()
 
@@ -281,6 +287,8 @@ class SequentialRetrieval(torch.nn.Module):
         self.event_type_conditioning_dim = event_type_conditioning_dim
         self.hstu_expert_num_blocks = hstu_expert_num_blocks
         self.hstu_gate_num_blocks = hstu_gate_num_blocks
+        self.load_balance_alpha = load_balance_alpha
+        self.router_z_beta = router_z_beta
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -301,6 +309,8 @@ class SequentialRetrieval(torch.nn.Module):
                 transformer_heads=self.mmoe_transformer_heads,
                 transformer_ffn_multiplier=self.mmoe_transformer_ffn_multiplier,
                 gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
             )
             logging.info(
                 f"MMoE module: experts={self.num_experts}, type={self.mmoe_expert_type}, "
@@ -665,7 +675,14 @@ class SequentialRetrieval(torch.nn.Module):
             if hasattr(self.multi_task_module, '_last_gate_entropy'):
                 for tid, entropy in self.multi_task_module._last_gate_entropy.items():
                     all_metrics[f"gate{tid}_entropy"] = entropy
-            
+
+            if hasattr(self.multi_task_module, '_load_balance_loss'):
+                total_loss = total_loss + self.multi_task_module.load_balance_alpha * self.multi_task_module._load_balance_loss
+                all_metrics['load_balance_loss'] = self.multi_task_module._load_balance_loss.detach()
+            if hasattr(self.multi_task_module, '_router_z_loss'):
+                total_loss = total_loss + self.multi_task_module.router_z_beta * self.multi_task_module._router_z_loss
+                all_metrics['router_z_loss'] = self.multi_task_module._router_z_loss.detach()
+
             if num_tasks_with_loss > 0:
                 total_loss = total_loss / num_tasks_with_loss
             
