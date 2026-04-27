@@ -54,7 +54,21 @@ from data.ads_datasets.collate import CollateFn
 from trainer.util import make_model
 from trainer.data_loader import create_data_loader
 from indexing.utils import get_top_k_module
-from event_types import EVENT_TYPE_NAMES, GROUP_MAP
+
+# ---------- EVENT TYPE MAPS ----------
+EVENT_TYPE_NAMES = {
+    0: "UNK", 1: "NativeClick", 2: "SearchClick", 3: "EdgePageTitle",
+    4: "EdgeSearchQuery", 5: "OrganicSearchQuery", 6: "UET",
+    7: "OutlookSenderDomain", 8: "UETShoppingCart", 9: "UETShoppingView",
+    10: "AbandonCart", 11: "EdgeShoppingCart", 12: "EdgeShoppingPurchase",
+}
+GROUP_MAP = {
+    1: "Ad", 2: "Ad",
+    3: "Browsing", 6: "Browsing", 9: "Browsing",
+    4: "Search", 5: "Search",
+    8: "Purchase", 10: "Purchase", 11: "Purchase", 12: "Purchase",
+    7: "Others",
+}
 
 
 def delete_flags(FLAGS, keys):
@@ -85,7 +99,7 @@ FLAGS = flags.FLAGS
 
 
 @torch.inference_mode()
-def run_eval(model, eval_data_loader, device, max_batches, leak_next_type_ids: bool = False):
+def run_eval(model, eval_data_loader, device, max_batches):
     """Run eval and collect per-sample retrieval ranks + event type IDs."""
     model.eval()
 
@@ -118,10 +132,7 @@ def run_eval(model, eval_data_loader, device, max_batches, leak_next_type_ids: b
         inp_ids = input_ids[:, :-1]
         inp_emb = raw_input_embeddings[:, :-1, :]
         inp_ts = timestamps[:, :-1]
-        if type_ids is not None:
-            inp_types = type_ids[:, 1:] if leak_next_type_ids else type_ids[:, :-1]
-        else:
-            inp_types = None
+        inp_types = type_ids[:, :-1] if type_ids is not None else None
         inp_lengths = lengths - 1
 
         # Label: the item at position lengths-1
@@ -275,12 +286,8 @@ def main(argv):
         collate_fn=collate_fn,
     )
 
-    leak_next_type_ids = bool(getattr(model, "enable_next_event_type_leakage", False))
-    if leak_next_type_ids:
-        logging.warning("[Option-E] Using leaked next-event type IDs during eval encode path.")
-
     logging.info(f"Running eval for up to {FLAGS.eval_batches} batches...")
-    ranks, types = run_eval(model, eval_loader, device, FLAGS.eval_batches, leak_next_type_ids=leak_next_type_ids)
+    ranks, types = run_eval(model, eval_loader, device, FLAGS.eval_batches)
     results = compute_metrics(ranks, types)
 
     # Pretty print
