@@ -1,0 +1,51 @@
+# PLE Fix 1: LR 2e-4, cosine decay, weight decay, longer warmup
+get_reco_dataset.dataset_name = "benchmarkv4_all_events_v2"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "MultiDomainPrecomputed"
+make_model.item_embedding_dim = 128
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingEventTypeEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 256
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "InBatch"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+make_model.multi_task_module_type = "ple"
+make_model.num_shared_experts = 2
+make_model.num_task_experts = 2
+make_model.expert_hidden_dim = 128
+
+make_model.supervision_domain_weights = {0: 1.0, 1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1}
+make_model.supervision_train_domains = [0, 1, 2, 3, 4]
+
+Trainer.local_batch_size = 32
+Trainer.eval_batch_size = 32
+Trainer.main_module_bf16 = False
+Trainer.num_epochs = 100
+Trainer.learning_rate = 2e-4
+Trainer.weight_decay = 1e-4
+Trainer.num_warmup_steps = 500
+Trainer.scheduler_type = "cosine"
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+Trainer.eval_method = "pplx"
+Trainer.eval_max_batches = 50
+Trainer.output_path = "/home/yourslewis/lrm-scaling-all-events/results_v2/proposed2b_ple_fix1"
+
+create_data_loader.num_workers = 1
+
+hstu_encoder.num_blocks = 16
+hstu_encoder.num_heads = 4
+hstu_encoder.dqk = 32
+hstu_encoder.dv = 32
+hstu_encoder.linear_dropout_rate = 0.2

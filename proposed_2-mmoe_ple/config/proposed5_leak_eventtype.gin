@@ -1,0 +1,56 @@
+# ============================================================
+# File: proposed5_leak_eventtype.gin
+# Option E: proposed2a_mmoe + leaked next-event type conditioning
+# ============================================================
+
+get_reco_dataset.dataset_name = "benchmarkv4_all_events_v2"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "MultiDomainPrecomputed"
+make_model.item_embedding_dim = 128
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingEventTypeEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 256
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "InBatch"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+# Option E (proposed5): same as proposed2a MMoE + next-event type leakage
+make_model.multi_task_module_type = "mmoe"
+make_model.num_experts = 4
+make_model.expert_hidden_dim = 128
+make_model.mmoe_expert_type = "mlp"
+make_model.enable_next_event_type_leakage = True
+
+# Train on all domains, eval on ads (domain 0)
+make_model.supervision_domain_weights = {0: 1.0, 1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1}
+make_model.supervision_train_domains = [0, 1, 2, 3, 4]
+
+Trainer.local_batch_size = 32
+Trainer.eval_batch_size = 32
+Trainer.main_module_bf16 = False
+Trainer.num_epochs = 100
+Trainer.learning_rate = 1e-3
+Trainer.weight_decay = 0
+Trainer.num_warmup_steps = 100
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+Trainer.eval_method = "pplx"
+Trainer.eval_max_batches = 50
+
+create_data_loader.num_workers = 1
+
+hstu_encoder.num_blocks = 16
+hstu_encoder.num_heads = 4
+hstu_encoder.dqk = 32
+hstu_encoder.dv = 32
+hstu_encoder.linear_dropout_rate = 0.2
