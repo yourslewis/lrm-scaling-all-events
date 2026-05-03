@@ -62,6 +62,7 @@ flags.DEFINE_string("ads_semantic_embd_path", None, "Path to domain 0 embeddings
 flags.DEFINE_string("web_browsing_semantic_embd_path", None, "Path to domain 1 embeddings.")
 flags.DEFINE_string("shopping_semantic_embd_path", None, "Path to domain 2 embeddings.")
 flags.DEFINE_string("ads_pure_corpus_embd_path", None, "Path to domain 3 embeddings.")
+flags.DEFINE_string("other_semantic_embd_path", None, "Path to domain 4 embeddings.")
 flags.DEFINE_string("mode", "job", "local or job.")
 flags.DEFINE_integer("max_eval_batches", 100, "Maximum number of eval batches.")
 flags.DEFINE_integer("eval_batch_size", 64, "Evaluation batch size.")
@@ -88,6 +89,7 @@ def main(argv):
         1: FLAGS.web_browsing_semantic_embd_path,
         2: FLAGS.shopping_semantic_embd_path,
         3: FLAGS.ads_pure_corpus_embd_path,
+        4: FLAGS.other_semantic_embd_path,
     }
 
     logging.info(f"Evaluating checkpoint: {checkpoint_path}")
