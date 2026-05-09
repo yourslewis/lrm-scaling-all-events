@@ -43,6 +43,10 @@ class EventTypeConditioner(torch.nn.Module):
         concat = torch.cat([seq_embeddings, type_emb], dim=-1)  # [B, N, D+E]
         return self.mlp(concat)  # [B, N, D]
 
+
+
+from proposed11_event_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner
+
 from modeling.sequential.nagatives_sampler import (
     InBatchNegativesSampler,
     RotateInDomainGlobalNegativesSampler,
@@ -131,6 +135,13 @@ def make_model(
     enable_next_event_type_leakage: bool = False,
     enable_output_event_type_conditioning: bool = False,  # proposed7
     event_type_conditioning_dim: int = 32,  # proposed7: event type embedding dim
+    enable_event_type_residual_conditioning: bool = False,  # P11/P12
+    event_type_residual_granularity: str = "event",  # "event" or "group"
+    event_type_residual_hidden_dim: int = 128,
+    event_type_residual_scale: float = 1.0,
+    event_type_residual_stabilized: bool = False,
+    event_type_residual_max_scale: float = 0.05,
+    event_type_residual_l2_normalize: bool = True,
     hstu_expert_num_blocks: int = 16,  # for hstu_mmoe: blocks per expert HSTU
     hstu_gate_num_blocks: int = 4,     # for hstu_mmoe: blocks for gate HSTU (lighter)
     load_balance_alpha: float = 0.0,
@@ -177,6 +188,13 @@ def make_model(
         enable_next_event_type_leakage=enable_next_event_type_leakage,
         enable_output_event_type_conditioning=enable_output_event_type_conditioning,
         event_type_conditioning_dim=event_type_conditioning_dim,
+        enable_event_type_residual_conditioning=enable_event_type_residual_conditioning,
+        event_type_residual_granularity=event_type_residual_granularity,
+        event_type_residual_hidden_dim=event_type_residual_hidden_dim,
+        event_type_residual_scale=event_type_residual_scale,
+        event_type_residual_stabilized=event_type_residual_stabilized,
+        event_type_residual_max_scale=event_type_residual_max_scale,
+        event_type_residual_l2_normalize=event_type_residual_l2_normalize,
         hstu_expert_num_blocks=hstu_expert_num_blocks,
         hstu_gate_num_blocks=hstu_gate_num_blocks,
         load_balance_alpha=load_balance_alpha,
@@ -229,6 +247,13 @@ class SequentialRetrieval(torch.nn.Module):
             enable_next_event_type_leakage: bool = False,
             enable_output_event_type_conditioning: bool = False,
             event_type_conditioning_dim: int = 32,
+            enable_event_type_residual_conditioning: bool = False,
+            event_type_residual_granularity: str = "event",
+            event_type_residual_hidden_dim: int = 128,
+            event_type_residual_scale: float = 1.0,
+            event_type_residual_stabilized: bool = False,
+            event_type_residual_max_scale: float = 0.05,
+            event_type_residual_l2_normalize: bool = True,
             hstu_expert_num_blocks: int = 16,
             hstu_gate_num_blocks: int = 4,
             load_balance_alpha: float = 0.0,
@@ -285,6 +310,13 @@ class SequentialRetrieval(torch.nn.Module):
         self.enable_next_event_type_leakage = enable_next_event_type_leakage
         self.enable_output_event_type_conditioning = enable_output_event_type_conditioning
         self.event_type_conditioning_dim = event_type_conditioning_dim
+        self.enable_event_type_residual_conditioning = enable_event_type_residual_conditioning
+        self.event_type_residual_granularity = event_type_residual_granularity
+        self.event_type_residual_hidden_dim = event_type_residual_hidden_dim
+        self.event_type_residual_scale = event_type_residual_scale
+        self.event_type_residual_stabilized = event_type_residual_stabilized
+        self.event_type_residual_max_scale = event_type_residual_max_scale
+        self.event_type_residual_l2_normalize = event_type_residual_l2_normalize
         self.hstu_expert_num_blocks = hstu_expert_num_blocks
         self.hstu_gate_num_blocks = hstu_gate_num_blocks
         self.load_balance_alpha = load_balance_alpha
@@ -376,6 +408,37 @@ class SequentialRetrieval(torch.nn.Module):
             logging.info(
                 f"[Proposed7] Output event-type conditioning ENABLED: "
                 f"event_type_dim={self.event_type_conditioning_dim}, "
+                f"num_event_types={self.num_event_types}"
+            )
+
+        self.event_type_residual_conditioner = None
+        if self.enable_event_type_residual_conditioning:
+            conditioner_cls = StabilizedEventTypeResidualConditioner if self.event_type_residual_stabilized else EventTypeResidualConditioner
+            extra_kwargs = {}
+            if self.event_type_residual_stabilized:
+                extra_kwargs = {
+                    "max_scale": self.event_type_residual_max_scale,
+                    "l2_normalize": self.event_type_residual_l2_normalize,
+                }
+            self.event_type_residual_conditioner = conditioner_cls(
+                input_dim=self.model_hidden_size,
+                condition_dim=self.event_type_conditioning_dim,
+                num_event_types=self.num_event_types,
+                hidden_dim=self.event_type_residual_hidden_dim,
+                granularity=self.event_type_residual_granularity,
+                residual_scale=self.event_type_residual_scale,
+                dropout=self.dropout_rate,
+                **extra_kwargs,
+            )
+            logging.info(
+                f"[P11/P12/P13/P14] Residual event conditioning ENABLED: "
+                f"granularity={self.event_type_residual_granularity}, "
+                f"condition_dim={self.event_type_conditioning_dim}, "
+                f"hidden_dim={self.event_type_residual_hidden_dim}, "
+                f"scale={self.event_type_residual_scale}, "
+                f"stabilized={self.event_type_residual_stabilized}, "
+                f"max_scale={self.event_type_residual_max_scale}, "
+                f"l2_normalize={self.event_type_residual_l2_normalize}, "
                 f"num_event_types={self.num_event_types}"
             )
 
@@ -637,6 +700,8 @@ class SequentialRetrieval(torch.nn.Module):
                 # Proposed7: condition task embedding on next-event type
                 if self.event_type_conditioner is not None and next_type_ids is not None:
                     task_emb = self.event_type_conditioner(task_emb, next_type_ids)
+                if self.event_type_residual_conditioner is not None and next_type_ids is not None:
+                    task_emb = self.event_type_residual_conditioner(task_emb, next_type_ids)
 
                 # Build domain mask for this task
                 if task_id == 0:
@@ -671,6 +736,10 @@ class SequentialRetrieval(torch.nn.Module):
                 for k, v in task_metrics.items():
                     all_metrics[f"task{task_id}_{k}"] = v
             
+            if self.event_type_residual_conditioner is not None and hasattr(self.event_type_residual_conditioner, '_last_metrics'):
+                for k, v in self.event_type_residual_conditioner._last_metrics.items():
+                    all_metrics[f"event_residual_{k}"] = v
+
             # Log gate entropy diagnostics
             if hasattr(self.multi_task_module, '_last_gate_entropy'):
                 for tid, entropy in self.multi_task_module._last_gate_entropy.items():
@@ -691,6 +760,8 @@ class SequentialRetrieval(torch.nn.Module):
             # Proposed7: condition eval embeddings too
             if self.event_type_conditioner is not None and next_type_ids is not None:
                 eval_embeddings = self.event_type_conditioner(eval_embeddings, next_type_ids)
+            if self.event_type_residual_conditioner is not None and next_type_ids is not None:
+                eval_embeddings = self.event_type_residual_conditioner(eval_embeddings, next_type_ids)
             return eval_embeddings, total_loss, all_metrics
 
         # --- Standard single-task path (same as P1) ---
@@ -726,6 +797,8 @@ class SequentialRetrieval(torch.nn.Module):
         # Proposed7: condition on next-event type (single-task path)
         if self.event_type_conditioner is not None and next_type_ids is not None:
             seq_embeddings = self.event_type_conditioner(seq_embeddings, next_type_ids)
+        if self.event_type_residual_conditioner is not None and next_type_ids is not None:
+            seq_embeddings = self.event_type_residual_conditioner(seq_embeddings, next_type_ids)
 
         loss, aux_losses, metrics = self.ar_loss(
             lengths=input_lengths,  # [B],

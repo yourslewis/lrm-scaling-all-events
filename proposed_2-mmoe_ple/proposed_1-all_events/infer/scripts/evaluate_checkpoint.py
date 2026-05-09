@@ -177,6 +177,7 @@ def main(argv):
         ratings = row["ratings"].to(device, non_blocking=True)
         timestamps = row["timestamps"].to(device, non_blocking=True)
         lengths = row["lengths"].to(device, non_blocking=True)
+        type_ids = row["type_ids"].to(device, non_blocking=True) if "type_ids" in row else None
 
         eval_dict = eval_metrics_v3_from_tensors(
             eval_state,
@@ -187,6 +188,8 @@ def main(argv):
             timestamps,
             lengths,
             user_id,
+            type_ids=type_ids,
+            leak_next_type_ids=bool(getattr(model, "enable_next_event_type_leakage", False)),
         )
 
         for k, v in eval_dict.items():
