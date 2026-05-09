@@ -1,1 +1,1 @@
-from .event_type_residual import EventTypeResidualConditioner
+from .event_type_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner
