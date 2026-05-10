@@ -6,7 +6,7 @@ import logging
 from modeling.sequential.autoregressive_losses import (
     BCELoss,
 )
-from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE
+from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE, EventTypeGatedMMoE, EventGroupSpecificMMoE
 
 
 class EventTypeConditioner(torch.nn.Module):
@@ -45,7 +45,7 @@ class EventTypeConditioner(torch.nn.Module):
 
 
 
-from proposed11_event_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner
+from proposed11_event_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner, StabilizedEventGroupExpertResidualConditioner
 
 from modeling.sequential.nagatives_sampler import (
     InBatchNegativesSampler,
@@ -348,6 +348,47 @@ class SequentialRetrieval(torch.nn.Module):
                 f"MMoE module: experts={self.num_experts}, type={self.mmoe_expert_type}, "
                 f"layers={self.mmoe_transformer_layers}, heads={self.mmoe_transformer_heads}, tasks={task_ids}"
             )
+        elif self.multi_task_module_type == "event_type_gated_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            self.multi_task_module = EventTypeGatedMMoE(
+                input_dim=self.model_hidden_size,
+                num_experts=self.num_experts,
+                expert_hidden_dim=self.expert_hidden_dim,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                num_event_types=self.num_event_types,
+                condition_dim=self.event_type_conditioning_dim,
+                dropout=self.dropout_rate,
+                expert_type=self.mmoe_expert_type,
+                transformer_layers=self.mmoe_transformer_layers,
+                transformer_heads=self.mmoe_transformer_heads,
+                transformer_ffn_multiplier=self.mmoe_transformer_ffn_multiplier,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
+            )
+            logging.info(
+                f"P15 EventTypeGatedMMoE: experts={self.num_experts}, type={self.mmoe_expert_type}, tasks={task_ids}"
+            )
+        elif self.multi_task_module_type == "event_group_expert_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            self.multi_task_module = EventGroupSpecificMMoE(
+                input_dim=self.model_hidden_size,
+                num_shared_experts=self.num_shared_experts,
+                num_group_experts=self.num_task_experts,
+                expert_hidden_dim=self.expert_hidden_dim,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                num_event_types=self.num_event_types,
+                condition_dim=self.event_type_conditioning_dim,
+                dropout=self.dropout_rate,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
+            )
+            logging.info(
+                f"P16 EventGroupSpecificMMoE: shared={self.num_shared_experts}, group={self.num_task_experts}, tasks={task_ids}"
+            )
         elif self.multi_task_module_type == "ple":
             task_ids = self.supervision_train_domains or [0]
             self.multi_task_module = PLE(
@@ -413,9 +454,12 @@ class SequentialRetrieval(torch.nn.Module):
 
         self.event_type_residual_conditioner = None
         if self.enable_event_type_residual_conditioning:
-            conditioner_cls = StabilizedEventTypeResidualConditioner if self.event_type_residual_stabilized else EventTypeResidualConditioner
+            if self.event_type_residual_granularity == "group_expert":
+                conditioner_cls = StabilizedEventGroupExpertResidualConditioner
+            else:
+                conditioner_cls = StabilizedEventTypeResidualConditioner if self.event_type_residual_stabilized else EventTypeResidualConditioner
             extra_kwargs = {}
-            if self.event_type_residual_stabilized:
+            if self.event_type_residual_stabilized or self.event_type_residual_granularity == "group_expert":
                 extra_kwargs = {
                     "max_scale": self.event_type_residual_max_scale,
                     "l2_normalize": self.event_type_residual_l2_normalize,
@@ -689,6 +733,8 @@ class SequentialRetrieval(torch.nn.Module):
                     past_embeddings=past_embeddings,
                     past_payloads=past_payloads,
                 )
+            elif isinstance(self.multi_task_module, (EventTypeGatedMMoE, EventGroupSpecificMMoE)):
+                task_embeddings = self.multi_task_module(seq_embeddings, next_type_ids)  # Dict[task_id, (B, N, D)]
             else:
                 task_embeddings = self.multi_task_module(seq_embeddings)  # Dict[task_id, (B, N, D)]
             
