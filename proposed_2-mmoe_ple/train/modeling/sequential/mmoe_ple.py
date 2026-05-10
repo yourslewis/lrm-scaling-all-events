@@ -346,3 +346,86 @@ class PLE(nn.Module):
             task_outputs[tid] = task_out
 
         return task_outputs
+
+
+# --- P15/P16 event-aware MMoE variants ---
+
+class EventTypeGatedMMoE(nn.Module):
+    """P15: MMoE with target event type conditioning in the router."""
+    def __init__(self, input_dim:int, num_experts:int, expert_hidden_dim:int, output_dim:int, task_ids:List[int], num_event_types:int, condition_dim:int=32, dropout:float=0.1, expert_type:str="mlp", transformer_layers:int=2, transformer_heads:int=4, transformer_ffn_multiplier:int=4, gate_hidden_dim:int=0, load_balance_alpha:float=0.0, router_z_beta:float=0.0):
+        super().__init__()
+        self.task_ids = task_ids; self.num_experts = num_experts; self.load_balance_alpha = load_balance_alpha; self.router_z_beta = router_z_beta
+        self.condition_emb = nn.Embedding(num_event_types + 1, condition_dim, padding_idx=0)
+        nn.init.xavier_normal_(self.condition_emb.weight)
+        with torch.no_grad(): self.condition_emb.weight[0].zero_()
+        def build_expert():
+            if expert_type == "transformer":
+                return TransformerExpert(input_dim, output_dim, transformer_layers, transformer_heads, transformer_ffn_multiplier, dropout)
+            return Expert(input_dim, expert_hidden_dim, output_dim, dropout)
+        self.experts = nn.ModuleList([build_expert() for _ in range(num_experts)])
+        gate_input_dim = input_dim + condition_dim
+        if gate_hidden_dim and gate_hidden_dim > 0:
+            self.gates = nn.ModuleDict({str(tid): nn.Sequential(nn.Linear(gate_input_dim, gate_hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(gate_hidden_dim, num_experts)) for tid in task_ids})
+        else:
+            self.gates = nn.ModuleDict({str(tid): nn.Linear(gate_input_dim, num_experts) for tid in task_ids})
+    def forward(self, x: torch.Tensor, next_type_ids: torch.Tensor=None) -> Dict[int, torch.Tensor]:
+        if next_type_ids is None:
+            next_type_ids = torch.zeros(x.shape[:2], dtype=torch.long, device=x.device)
+        cond = self.condition_emb(next_type_ids.long().clamp_min(0).clamp_max(self.condition_emb.num_embeddings - 1))
+        gate_x = torch.cat([x, cond], dim=-1)
+        expert_outputs = torch.stack([expert(x) for expert in self.experts], dim=-2)
+        task_outputs = {}; self._last_gate_entropy = {}; gate_weights_per_task = {}; gate_logits_per_task = {}
+        for tid in self.task_ids:
+            logits = self.gates[str(tid)](gate_x); weights = F.softmax(logits, dim=-1)
+            gate_logits_per_task[tid] = logits; gate_weights_per_task[tid] = weights
+            self._last_gate_entropy[tid] = -(weights * (weights + 1e-8).log()).sum(dim=-1).mean().detach()
+            task_outputs[tid] = (weights.unsqueeze(-1) * expert_outputs).sum(dim=-2)
+        if self.load_balance_alpha > 0:
+            all_w = torch.stack([gate_weights_per_task[tid] for tid in self.task_ids]); f = all_w.mean(dim=[0,1,2]); P = all_w.mean(dim=[0,1,2]); self._load_balance_loss = self.num_experts * (f * P).sum()
+        else: self._load_balance_loss = torch.tensor(0.0, device=x.device)
+        if self.router_z_beta > 0:
+            all_logits = torch.stack([gate_logits_per_task[tid] for tid in self.task_ids]); self._router_z_loss = torch.logsumexp(all_logits, dim=-1).square().mean()
+        else: self._router_z_loss = torch.tensor(0.0, device=x.device)
+        return task_outputs
+
+class EventGroupSpecificMMoE(nn.Module):
+    """P16: shared experts plus target-event-group-specific experts."""
+    def __init__(self, input_dim:int, num_shared_experts:int, num_group_experts:int, expert_hidden_dim:int, output_dim:int, task_ids:List[int], num_event_types:int, condition_dim:int=32, dropout:float=0.1, gate_hidden_dim:int=0, load_balance_alpha:float=0.0, router_z_beta:float=0.0):
+        super().__init__()
+        from proposed12_group_residual.event_groups import build_event_type_to_group_tensor
+        self.task_ids = task_ids; self.num_shared_experts = num_shared_experts; self.num_group_experts = num_group_experts; self.num_experts = num_shared_experts + num_group_experts; self.load_balance_alpha = load_balance_alpha; self.router_z_beta = router_z_beta
+        self.shared_experts = nn.ModuleList([Expert(input_dim, expert_hidden_dim, output_dim, dropout) for _ in range(num_shared_experts)])
+        self.group_experts = nn.ModuleList([nn.ModuleList([Expert(input_dim, expert_hidden_dim, output_dim, dropout) for _ in range(num_group_experts)]) for _ in range(6)])
+        self.condition_emb = nn.Embedding(6, condition_dim, padding_idx=0); nn.init.xavier_normal_(self.condition_emb.weight)
+        with torch.no_grad(): self.condition_emb.weight[0].zero_()
+        self.register_buffer('event_type_to_group', build_event_type_to_group_tensor(num_event_types), persistent=False)
+        gate_input_dim = input_dim + condition_dim; total = num_shared_experts + num_group_experts
+        if gate_hidden_dim and gate_hidden_dim > 0:
+            self.gates = nn.ModuleDict({str(tid): nn.Sequential(nn.Linear(gate_input_dim, gate_hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(gate_hidden_dim, total)) for tid in task_ids})
+        else:
+            self.gates = nn.ModuleDict({str(tid): nn.Linear(gate_input_dim, total) for tid in task_ids})
+    def _group_ids(self, next_type_ids: torch.Tensor) -> torch.Tensor:
+        safe = next_type_ids.long().clamp_min(0).clamp_max(self.event_type_to_group.numel() - 1); return self.event_type_to_group[safe]
+    def forward(self, x: torch.Tensor, next_type_ids: torch.Tensor=None) -> Dict[int, torch.Tensor]:
+        if next_type_ids is None: group_ids = torch.zeros(x.shape[:2], dtype=torch.long, device=x.device)
+        else: group_ids = self._group_ids(next_type_ids.to(x.device))
+        cond = self.condition_emb(group_ids); gate_x = torch.cat([x, cond], dim=-1)
+        shared = torch.stack([e(x) for e in self.shared_experts], dim=-2) if self.num_shared_experts > 0 else None
+        group_banks = [torch.stack([e(x) for e in bank], dim=-2) for bank in self.group_experts]
+        all_group = torch.stack(group_banks, dim=2)
+        gather_idx = group_ids.view(*group_ids.shape,1,1,1).expand(-1,-1,1,self.num_group_experts,x.size(-1))
+        active_group = all_group.gather(2, gather_idx).squeeze(2)
+        expert_outputs = torch.cat([shared, active_group], dim=-2) if shared is not None else active_group
+        task_outputs = {}; self._last_gate_entropy = {}; gate_weights_per_task = {}; gate_logits_per_task = {}
+        for tid in self.task_ids:
+            logits = self.gates[str(tid)](gate_x); weights = F.softmax(logits, dim=-1)
+            gate_logits_per_task[tid] = logits; gate_weights_per_task[tid] = weights
+            self._last_gate_entropy[tid] = -(weights * (weights + 1e-8).log()).sum(dim=-1).mean().detach()
+            task_outputs[tid] = (weights.unsqueeze(-1) * expert_outputs).sum(dim=-2)
+        if self.load_balance_alpha > 0:
+            all_w = torch.stack([gate_weights_per_task[tid] for tid in self.task_ids]); f = all_w.mean(dim=[0,1,2]); P = all_w.mean(dim=[0,1,2]); self._load_balance_loss = self.num_experts * (f * P).sum()
+        else: self._load_balance_loss = torch.tensor(0.0, device=x.device)
+        if self.router_z_beta > 0:
+            all_logits = torch.stack([gate_logits_per_task[tid] for tid in self.task_ids]); self._router_z_loss = torch.logsumexp(all_logits, dim=-1).square().mean()
+        else: self._router_z_loss = torch.tensor(0.0, device=x.device)
+        return task_outputs

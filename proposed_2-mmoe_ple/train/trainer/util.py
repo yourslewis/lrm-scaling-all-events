@@ -6,7 +6,7 @@ import logging
 from modeling.sequential.autoregressive_losses import (
     BCELoss,
 )
-from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE
+from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE, EventTypeGatedMMoE, EventGroupSpecificMMoE
 
 
 class EventTypeConditioner(torch.nn.Module):
@@ -45,7 +45,7 @@ class EventTypeConditioner(torch.nn.Module):
 
 
 
-from proposed11_event_residual import EventTypeResidualConditioner
+from proposed11_event_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner, StabilizedEventGroupExpertResidualConditioner
 
 from modeling.sequential.nagatives_sampler import (
     InBatchNegativesSampler,
@@ -139,6 +139,9 @@ def make_model(
     event_type_residual_granularity: str = "event",  # "event" or "group"
     event_type_residual_hidden_dim: int = 128,
     event_type_residual_scale: float = 1.0,
+    event_type_residual_stabilized: bool = False,
+    event_type_residual_max_scale: float = 0.05,
+    event_type_residual_l2_normalize: bool = True,
     hstu_expert_num_blocks: int = 16,  # for hstu_mmoe: blocks per expert HSTU
     hstu_gate_num_blocks: int = 4,     # for hstu_mmoe: blocks for gate HSTU (lighter)
     load_balance_alpha: float = 0.0,
@@ -189,6 +192,9 @@ def make_model(
         event_type_residual_granularity=event_type_residual_granularity,
         event_type_residual_hidden_dim=event_type_residual_hidden_dim,
         event_type_residual_scale=event_type_residual_scale,
+        event_type_residual_stabilized=event_type_residual_stabilized,
+        event_type_residual_max_scale=event_type_residual_max_scale,
+        event_type_residual_l2_normalize=event_type_residual_l2_normalize,
         hstu_expert_num_blocks=hstu_expert_num_blocks,
         hstu_gate_num_blocks=hstu_gate_num_blocks,
         load_balance_alpha=load_balance_alpha,
@@ -245,6 +251,9 @@ class SequentialRetrieval(torch.nn.Module):
             event_type_residual_granularity: str = "event",
             event_type_residual_hidden_dim: int = 128,
             event_type_residual_scale: float = 1.0,
+            event_type_residual_stabilized: bool = False,
+            event_type_residual_max_scale: float = 0.05,
+            event_type_residual_l2_normalize: bool = True,
             hstu_expert_num_blocks: int = 16,
             hstu_gate_num_blocks: int = 4,
             load_balance_alpha: float = 0.0,
@@ -305,6 +314,9 @@ class SequentialRetrieval(torch.nn.Module):
         self.event_type_residual_granularity = event_type_residual_granularity
         self.event_type_residual_hidden_dim = event_type_residual_hidden_dim
         self.event_type_residual_scale = event_type_residual_scale
+        self.event_type_residual_stabilized = event_type_residual_stabilized
+        self.event_type_residual_max_scale = event_type_residual_max_scale
+        self.event_type_residual_l2_normalize = event_type_residual_l2_normalize
         self.hstu_expert_num_blocks = hstu_expert_num_blocks
         self.hstu_gate_num_blocks = hstu_gate_num_blocks
         self.load_balance_alpha = load_balance_alpha
@@ -335,6 +347,47 @@ class SequentialRetrieval(torch.nn.Module):
             logging.info(
                 f"MMoE module: experts={self.num_experts}, type={self.mmoe_expert_type}, "
                 f"layers={self.mmoe_transformer_layers}, heads={self.mmoe_transformer_heads}, tasks={task_ids}"
+            )
+        elif self.multi_task_module_type == "event_type_gated_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            self.multi_task_module = EventTypeGatedMMoE(
+                input_dim=self.model_hidden_size,
+                num_experts=self.num_experts,
+                expert_hidden_dim=self.expert_hidden_dim,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                num_event_types=self.num_event_types,
+                condition_dim=self.event_type_conditioning_dim,
+                dropout=self.dropout_rate,
+                expert_type=self.mmoe_expert_type,
+                transformer_layers=self.mmoe_transformer_layers,
+                transformer_heads=self.mmoe_transformer_heads,
+                transformer_ffn_multiplier=self.mmoe_transformer_ffn_multiplier,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
+            )
+            logging.info(
+                f"P15 EventTypeGatedMMoE: experts={self.num_experts}, type={self.mmoe_expert_type}, tasks={task_ids}"
+            )
+        elif self.multi_task_module_type == "event_group_expert_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            self.multi_task_module = EventGroupSpecificMMoE(
+                input_dim=self.model_hidden_size,
+                num_shared_experts=self.num_shared_experts,
+                num_group_experts=self.num_task_experts,
+                expert_hidden_dim=self.expert_hidden_dim,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                num_event_types=self.num_event_types,
+                condition_dim=self.event_type_conditioning_dim,
+                dropout=self.dropout_rate,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
+            )
+            logging.info(
+                f"P16 EventGroupSpecificMMoE: shared={self.num_shared_experts}, group={self.num_task_experts}, tasks={task_ids}"
             )
         elif self.multi_task_module_type == "ple":
             task_ids = self.supervision_train_domains or [0]
@@ -401,7 +454,17 @@ class SequentialRetrieval(torch.nn.Module):
 
         self.event_type_residual_conditioner = None
         if self.enable_event_type_residual_conditioning:
-            self.event_type_residual_conditioner = EventTypeResidualConditioner(
+            if self.event_type_residual_granularity == "group_expert":
+                conditioner_cls = StabilizedEventGroupExpertResidualConditioner
+            else:
+                conditioner_cls = StabilizedEventTypeResidualConditioner if self.event_type_residual_stabilized else EventTypeResidualConditioner
+            extra_kwargs = {}
+            if self.event_type_residual_stabilized or self.event_type_residual_granularity == "group_expert":
+                extra_kwargs = {
+                    "max_scale": self.event_type_residual_max_scale,
+                    "l2_normalize": self.event_type_residual_l2_normalize,
+                }
+            self.event_type_residual_conditioner = conditioner_cls(
                 input_dim=self.model_hidden_size,
                 condition_dim=self.event_type_conditioning_dim,
                 num_event_types=self.num_event_types,
@@ -409,13 +472,17 @@ class SequentialRetrieval(torch.nn.Module):
                 granularity=self.event_type_residual_granularity,
                 residual_scale=self.event_type_residual_scale,
                 dropout=self.dropout_rate,
+                **extra_kwargs,
             )
             logging.info(
-                f"[P11/P12] Residual event conditioning ENABLED: "
+                f"[P11/P12/P13/P14] Residual event conditioning ENABLED: "
                 f"granularity={self.event_type_residual_granularity}, "
                 f"condition_dim={self.event_type_conditioning_dim}, "
                 f"hidden_dim={self.event_type_residual_hidden_dim}, "
                 f"scale={self.event_type_residual_scale}, "
+                f"stabilized={self.event_type_residual_stabilized}, "
+                f"max_scale={self.event_type_residual_max_scale}, "
+                f"l2_normalize={self.event_type_residual_l2_normalize}, "
                 f"num_event_types={self.num_event_types}"
             )
 
@@ -666,6 +733,8 @@ class SequentialRetrieval(torch.nn.Module):
                     past_embeddings=past_embeddings,
                     past_payloads=past_payloads,
                 )
+            elif isinstance(self.multi_task_module, (EventTypeGatedMMoE, EventGroupSpecificMMoE)):
+                task_embeddings = self.multi_task_module(seq_embeddings, next_type_ids)  # Dict[task_id, (B, N, D)]
             else:
                 task_embeddings = self.multi_task_module(seq_embeddings)  # Dict[task_id, (B, N, D)]
             
@@ -713,6 +782,10 @@ class SequentialRetrieval(torch.nn.Module):
                 for k, v in task_metrics.items():
                     all_metrics[f"task{task_id}_{k}"] = v
             
+            if self.event_type_residual_conditioner is not None and hasattr(self.event_type_residual_conditioner, '_last_metrics'):
+                for k, v in self.event_type_residual_conditioner._last_metrics.items():
+                    all_metrics[f"event_residual_{k}"] = v
+
             # Log gate entropy diagnostics
             if hasattr(self.multi_task_module, '_last_gate_entropy'):
                 for tid, entropy in self.multi_task_module._last_gate_entropy.items():
