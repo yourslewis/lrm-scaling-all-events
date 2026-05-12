@@ -146,6 +146,11 @@ def make_model(
     hstu_gate_num_blocks: int = 4,     # for hstu_mmoe: blocks for gate HSTU (lighter)
     load_balance_alpha: float = 0.0,
     router_z_beta: float = 0.0,
+    enable_ad_proximity_weighting: bool = False,
+    ad_proximity_boost_scale: float = 0.0,
+    ad_proximity_tau_seconds: float = 7200.0,
+    ad_proximity_lookahead_seconds: float = 86400.0,
+    ad_proximity_apply_to_non_ad_only: bool = True,
 ) -> torch.nn.Module:
     """
     Create and return the model for training.
@@ -199,6 +204,11 @@ def make_model(
         hstu_gate_num_blocks=hstu_gate_num_blocks,
         load_balance_alpha=load_balance_alpha,
         router_z_beta=router_z_beta,
+        enable_ad_proximity_weighting=enable_ad_proximity_weighting,
+        ad_proximity_boost_scale=ad_proximity_boost_scale,
+        ad_proximity_tau_seconds=ad_proximity_tau_seconds,
+        ad_proximity_lookahead_seconds=ad_proximity_lookahead_seconds,
+        ad_proximity_apply_to_non_ad_only=ad_proximity_apply_to_non_ad_only,
         )
     return model
 
@@ -258,6 +268,11 @@ class SequentialRetrieval(torch.nn.Module):
             hstu_gate_num_blocks: int = 4,
             load_balance_alpha: float = 0.0,
             router_z_beta: float = 0.0,
+            enable_ad_proximity_weighting: bool = False,
+            ad_proximity_boost_scale: float = 0.0,
+            ad_proximity_tau_seconds: float = 7200.0,
+            ad_proximity_lookahead_seconds: float = 86400.0,
+            ad_proximity_apply_to_non_ad_only: bool = True,
             ) -> None:
         super().__init__()
 
@@ -321,6 +336,11 @@ class SequentialRetrieval(torch.nn.Module):
         self.hstu_gate_num_blocks = hstu_gate_num_blocks
         self.load_balance_alpha = load_balance_alpha
         self.router_z_beta = router_z_beta
+        self.enable_ad_proximity_weighting = enable_ad_proximity_weighting
+        self.ad_proximity_boost_scale = ad_proximity_boost_scale
+        self.ad_proximity_tau_seconds = ad_proximity_tau_seconds
+        self.ad_proximity_lookahead_seconds = ad_proximity_lookahead_seconds
+        self.ad_proximity_apply_to_non_ad_only = ad_proximity_apply_to_non_ad_only
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -676,6 +696,61 @@ class SequentialRetrieval(torch.nn.Module):
         return model, ar_loss, negatives_sampler, model_debug_str, interaction_module_debug_str, sampling_debug_str, loss_debug_str
 
 
+
+    def _compute_ad_proximity_weights(
+        self,
+        next_type_ids: torch.Tensor,
+        label_timestamps: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return multiplicative supervision weights from future-ad proximity.
+
+        For each target position, find the nearest/strongest future Ads anchor
+        by wall-clock time and apply: 1 + boost_scale * exp(-dt / tau).
+        First version applies only to non-ad targets by default.
+        """
+        if (
+            not self.enable_ad_proximity_weighting
+            or next_type_ids is None
+            or label_timestamps is None
+            or self.ad_proximity_boost_scale <= 0
+        ):
+            return None
+
+        # Ads event type IDs from shared/event_types.py: NativeClick=1, SearchClick=2.
+        is_ad = (next_type_ids == 1) | (next_type_ids == 2)
+        times = label_timestamps.float()
+        valid = (next_type_ids > 0) & (times > 0)
+
+        B, N = next_type_ids.shape
+        weights = torch.ones((B, N), dtype=torch.float32, device=next_type_ids.device)
+        if not is_ad.any():
+            return weights
+
+        # Pairwise future-ad time deltas: dt[b, i, j] = t_ad_j - t_i.
+        dt = times.unsqueeze(1) - times.unsqueeze(2)  # [B, N(current), N(anchor)] after transpose logic below
+        # Correction: current index is dim=1, anchor index is dim=2.
+        # times.unsqueeze(1): anchor times; times.unsqueeze(2): current times.
+        # Positive dt means anchor is later in wall-clock time than current event.
+        anchor_is_ad = is_ad.unsqueeze(1).expand(B, N, N)
+        current_valid = valid.unsqueeze(2).expand(B, N, N)
+        future_mask = (
+            anchor_is_ad
+            & current_valid
+            & (dt > 0)
+            & (dt <= float(self.ad_proximity_lookahead_seconds))
+        )
+
+        proximity = torch.exp(-dt.clamp_min(0.0) / float(self.ad_proximity_tau_seconds))
+        proximity = proximity.masked_fill(~future_mask, 0.0)
+        best_proximity = proximity.max(dim=2).values
+
+        apply_mask = valid
+        if self.ad_proximity_apply_to_non_ad_only:
+            apply_mask = apply_mask & (~is_ad)
+
+        weights = weights + float(self.ad_proximity_boost_scale) * best_proximity * apply_mask.float()
+        return weights
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -686,6 +761,7 @@ class SequentialRetrieval(torch.nn.Module):
         ratings: torch.Tensor = None,
         type_ids: torch.Tensor = None,
         next_type_ids: torch.Tensor = None,  # next-event type IDs for proposed7
+        label_timestamps: torch.Tensor = None,
         timestamps: torch.Tensor = None,
         user_ids: torch.Tensor = None,   
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -763,6 +839,12 @@ class SequentialRetrieval(torch.nn.Module):
                 task_weights = domain_mask.float()
                 task_weight_scalar = self.supervision_domain_weights.get(task_id, 1.0)
                 task_weights *= task_weight_scalar
+                ad_proximity_weights = self._compute_ad_proximity_weights(next_type_ids, label_timestamps)
+                if ad_proximity_weights is not None:
+                    task_weights *= ad_proximity_weights
+                    if task_id == 0:
+                        all_metrics["ad_proximity_weight_mean"] = ad_proximity_weights.mean().detach()
+                        all_metrics["ad_proximity_weight_max"] = ad_proximity_weights.max().detach()
                 
                 if self.supervision_target_position == "last":
                     task_weights = keep_last_nonzero(task_weights)
@@ -824,6 +906,10 @@ class SequentialRetrieval(torch.nn.Module):
                 )
             supervision_weights[domain_mask] *= weight
 
+        ad_proximity_weights = self._compute_ad_proximity_weights(next_type_ids, label_timestamps)
+        if ad_proximity_weights is not None:
+            supervision_weights *= ad_proximity_weights
+
         # Config-driven domain restriction (replaces commented-out "train on ads only")
         if self.supervision_train_domains is not None:
             train_mask = torch.zeros_like(label_ids, dtype=torch.bool)
@@ -855,6 +941,9 @@ class SequentialRetrieval(torch.nn.Module):
             negatives_sampler=self.negatives_sampler['train'],
         )  # [B, N]
 
+        if ad_proximity_weights is not None:
+            metrics["ad_proximity_weight_mean"] = ad_proximity_weights.mean().detach()
+            metrics["ad_proximity_weight_max"] = ad_proximity_weights.max().detach()
         loss = get_weighted_loss(loss, aux_losses, weights=self.loss_weights or {})     # default to be {}
         return seq_embeddings, loss, metrics
 
