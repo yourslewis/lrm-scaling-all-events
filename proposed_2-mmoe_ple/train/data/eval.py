@@ -368,4 +368,16 @@ def eval_metrics_v3_from_tensors(
     )
     metrics.update(recall_metrics)
 
+    # Ads-specific validation metrics for final-label retrieval.
+    # Ads event type IDs from shared/event_types.py: NativeClick=1, SearchClick=2.
+    # Keep these as per-sample tensors so the Trainer's existing _avg aggregation
+    # computes an Ads-only mean across eval batches/ranks.
+    if type_ids is not None:
+        label_type_ids = type_ids[torch.arange(input_ids.size(0), device=input_ids.device), lengths - 1]
+        ads_mask = (label_type_ids == 1) | (label_type_ids == 2)
+        if ads_mask.any():
+            for key in ["ndcg_1", "ndcg_10", "ndcg_50", "ndcg_100", "hr_1", "hr_10", "hr_50", "hr_100", "hr_1000", "mrr"]:
+                if key in recall_metrics:
+                    metrics[f"ads_{key}"] = recall_metrics[key][ads_mask]
+
     return metrics  # pyre-ignore [7]
