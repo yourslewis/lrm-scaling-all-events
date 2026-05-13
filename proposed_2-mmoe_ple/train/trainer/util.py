@@ -2,6 +2,8 @@ import gin
 import torch
 import torch.nn as nn
 import logging
+import json
+from pathlib import Path
 
 from modeling.sequential.autoregressive_losses import (
     BCELoss,
@@ -165,6 +167,10 @@ def make_model(
     ad_anchor_strong_event_gate: float = 1.0,
     ad_anchor_page_title_gate: float = 0.4,
     ad_anchor_msn_gate: float = 0.1,
+    ad_anchor_empirical_prob_path: str = "",
+    ad_anchor_empirical_p_low: float = 0.0,
+    ad_anchor_empirical_p_high: float = 0.20,
+    ad_anchor_empirical_gate_power: float = 1.0,
     ad_anchor_semantic_sim_min: float = 0.20,
     ad_anchor_semantic_sim_max: float = 0.65,
     ad_anchor_semantic_gate_power: float = 1.0,
@@ -240,6 +246,10 @@ def make_model(
         ad_anchor_strong_event_gate=ad_anchor_strong_event_gate,
         ad_anchor_page_title_gate=ad_anchor_page_title_gate,
         ad_anchor_msn_gate=ad_anchor_msn_gate,
+        ad_anchor_empirical_prob_path=ad_anchor_empirical_prob_path,
+        ad_anchor_empirical_p_low=ad_anchor_empirical_p_low,
+        ad_anchor_empirical_p_high=ad_anchor_empirical_p_high,
+        ad_anchor_empirical_gate_power=ad_anchor_empirical_gate_power,
         ad_anchor_semantic_sim_min=ad_anchor_semantic_sim_min,
         ad_anchor_semantic_sim_max=ad_anchor_semantic_sim_max,
         ad_anchor_semantic_gate_power=ad_anchor_semantic_gate_power,
@@ -321,6 +331,10 @@ class SequentialRetrieval(torch.nn.Module):
             ad_anchor_strong_event_gate: float = 1.0,
             ad_anchor_page_title_gate: float = 0.4,
             ad_anchor_msn_gate: float = 0.1,
+            ad_anchor_empirical_prob_path: str = "",
+            ad_anchor_empirical_p_low: float = 0.0,
+            ad_anchor_empirical_p_high: float = 0.20,
+            ad_anchor_empirical_gate_power: float = 1.0,
             ad_anchor_semantic_sim_min: float = 0.20,
             ad_anchor_semantic_sim_max: float = 0.65,
             ad_anchor_semantic_gate_power: float = 1.0,
@@ -406,9 +420,41 @@ class SequentialRetrieval(torch.nn.Module):
         self.ad_anchor_strong_event_gate = ad_anchor_strong_event_gate
         self.ad_anchor_page_title_gate = ad_anchor_page_title_gate
         self.ad_anchor_msn_gate = ad_anchor_msn_gate
+        self.ad_anchor_empirical_prob_path = ad_anchor_empirical_prob_path
+        self.ad_anchor_empirical_p_low = ad_anchor_empirical_p_low
+        self.ad_anchor_empirical_p_high = ad_anchor_empirical_p_high
+        self.ad_anchor_empirical_gate_power = ad_anchor_empirical_gate_power
         self.ad_anchor_semantic_sim_min = ad_anchor_semantic_sim_min
         self.ad_anchor_semantic_sim_max = ad_anchor_semantic_sim_max
         self.ad_anchor_semantic_gate_power = ad_anchor_semantic_gate_power
+
+        empirical_gate = torch.ones(self.num_event_types + 1, dtype=torch.float32)
+        if self.ad_anchor_empirical_prob_path:
+            empirical_gate.zero_()
+            data = json.loads(Path(self.ad_anchor_empirical_prob_path).read_text())
+            by_type = data.get("event_type_prob", data)
+            name_to_id = {
+                "NativeClick": 1, "SearchClick": 2, "EdgePageTitle": 3,
+                "EdgeSearchQuery": 4, "OrganicSearchQuery": 5, "UET": 6,
+                "OutlookSenderDomain": 7, "UETShoppingCart": 8, "UETShoppingView": 9,
+                "AbandonCart": 10, "EdgeShoppingCart": 11, "EdgeShoppingPurchase": 12,
+                "ChromePageTitle": 13, "MSN": 14,
+            }
+            denom = max(float(self.ad_anchor_empirical_p_high - self.ad_anchor_empirical_p_low), 1e-6)
+            for key, val in by_type.items():
+                etype_id = name_to_id.get(str(key), None)
+                if etype_id is None:
+                    try:
+                        etype_id = int(key)
+                    except Exception:
+                        continue
+                prob = float(val.get("p_near_ad", val) if isinstance(val, dict) else val)
+                gate = max(0.0, min(1.0, (prob - float(self.ad_anchor_empirical_p_low)) / denom))
+                if float(self.ad_anchor_empirical_gate_power) != 1.0:
+                    gate = gate ** float(self.ad_anchor_empirical_gate_power)
+                if 0 <= etype_id < empirical_gate.numel():
+                    empirical_gate[etype_id] = gate
+        self.register_buffer("ad_anchor_empirical_gate", empirical_gate, persistent=False)
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -922,6 +968,8 @@ class SequentialRetrieval(torch.nn.Module):
                     torch.full_like(gate, float(self.ad_anchor_msn_gate)),
                     gate,
                 )
+            elif mode == "empirical_prob":
+                gate = self.ad_anchor_empirical_gate[next_type_ids.clamp(min=0, max=self.ad_anchor_empirical_gate.numel() - 1)]
             elif mode not in ("none", ""):
                 raise ValueError(f"Unsupported ad_anchor_event_gate_mode={mode}")
             best_boost_factor = best_proximity * gate
