@@ -6,7 +6,7 @@ import logging
 from modeling.sequential.autoregressive_losses import (
     BCELoss,
 )
-from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE
+from modeling.sequential.mmoe_ple import MMoE, PLE, HSTUMMoE, EventTypeGatedMMoE, EventGroupSpecificMMoE
 
 
 class EventTypeConditioner(torch.nn.Module):
@@ -45,7 +45,7 @@ class EventTypeConditioner(torch.nn.Module):
 
 
 
-from proposed11_event_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner
+from proposed11_event_residual import EventTypeResidualConditioner, StabilizedEventTypeResidualConditioner, StabilizedEventGroupExpertResidualConditioner
 
 from modeling.sequential.nagatives_sampler import (
     InBatchNegativesSampler,
@@ -146,6 +146,28 @@ def make_model(
     hstu_gate_num_blocks: int = 4,     # for hstu_mmoe: blocks for gate HSTU (lighter)
     load_balance_alpha: float = 0.0,
     router_z_beta: float = 0.0,
+    enable_ad_proximity_weighting: bool = False,
+    ad_proximity_boost_scale: float = 0.0,
+    ad_proximity_tau_seconds: float = 7200.0,
+    ad_proximity_lookahead_seconds: float = 86400.0,
+    ad_proximity_apply_to_non_ad_only: bool = True,
+    enable_ad_anchor_proximity_weighting: bool = False,
+    ad_anchor_max_weight: float = 4.0,
+    ad_anchor_sigma_seconds: float = 180.0,
+    ad_anchor_pre_window_seconds: float = 600.0,
+    ad_anchor_post_window_seconds: float = 600.0,
+    ad_anchor_use_pre: bool = True,
+    ad_anchor_use_post: bool = True,
+    ad_anchor_apply_to_non_ad_only: bool = True,
+    ad_anchor_pre_side_multiplier: float = 1.0,
+    ad_anchor_post_side_multiplier: float = 1.0,
+    ad_anchor_event_gate_mode: str = "none",
+    ad_anchor_strong_event_gate: float = 1.0,
+    ad_anchor_page_title_gate: float = 0.4,
+    ad_anchor_msn_gate: float = 0.1,
+    ad_anchor_semantic_sim_min: float = 0.20,
+    ad_anchor_semantic_sim_max: float = 0.65,
+    ad_anchor_semantic_gate_power: float = 1.0,
 ) -> torch.nn.Module:
     """
     Create and return the model for training.
@@ -199,6 +221,28 @@ def make_model(
         hstu_gate_num_blocks=hstu_gate_num_blocks,
         load_balance_alpha=load_balance_alpha,
         router_z_beta=router_z_beta,
+        enable_ad_proximity_weighting=enable_ad_proximity_weighting,
+        ad_proximity_boost_scale=ad_proximity_boost_scale,
+        ad_proximity_tau_seconds=ad_proximity_tau_seconds,
+        ad_proximity_lookahead_seconds=ad_proximity_lookahead_seconds,
+        ad_proximity_apply_to_non_ad_only=ad_proximity_apply_to_non_ad_only,
+        enable_ad_anchor_proximity_weighting=enable_ad_anchor_proximity_weighting,
+        ad_anchor_max_weight=ad_anchor_max_weight,
+        ad_anchor_sigma_seconds=ad_anchor_sigma_seconds,
+        ad_anchor_pre_window_seconds=ad_anchor_pre_window_seconds,
+        ad_anchor_post_window_seconds=ad_anchor_post_window_seconds,
+        ad_anchor_use_pre=ad_anchor_use_pre,
+        ad_anchor_use_post=ad_anchor_use_post,
+        ad_anchor_apply_to_non_ad_only=ad_anchor_apply_to_non_ad_only,
+        ad_anchor_pre_side_multiplier=ad_anchor_pre_side_multiplier,
+        ad_anchor_post_side_multiplier=ad_anchor_post_side_multiplier,
+        ad_anchor_event_gate_mode=ad_anchor_event_gate_mode,
+        ad_anchor_strong_event_gate=ad_anchor_strong_event_gate,
+        ad_anchor_page_title_gate=ad_anchor_page_title_gate,
+        ad_anchor_msn_gate=ad_anchor_msn_gate,
+        ad_anchor_semantic_sim_min=ad_anchor_semantic_sim_min,
+        ad_anchor_semantic_sim_max=ad_anchor_semantic_sim_max,
+        ad_anchor_semantic_gate_power=ad_anchor_semantic_gate_power,
         )
     return model
 
@@ -258,6 +302,28 @@ class SequentialRetrieval(torch.nn.Module):
             hstu_gate_num_blocks: int = 4,
             load_balance_alpha: float = 0.0,
             router_z_beta: float = 0.0,
+            enable_ad_proximity_weighting: bool = False,
+            ad_proximity_boost_scale: float = 0.0,
+            ad_proximity_tau_seconds: float = 7200.0,
+            ad_proximity_lookahead_seconds: float = 86400.0,
+            ad_proximity_apply_to_non_ad_only: bool = True,
+            enable_ad_anchor_proximity_weighting: bool = False,
+            ad_anchor_max_weight: float = 4.0,
+            ad_anchor_sigma_seconds: float = 180.0,
+            ad_anchor_pre_window_seconds: float = 600.0,
+            ad_anchor_post_window_seconds: float = 600.0,
+            ad_anchor_use_pre: bool = True,
+            ad_anchor_use_post: bool = True,
+            ad_anchor_apply_to_non_ad_only: bool = True,
+            ad_anchor_pre_side_multiplier: float = 1.0,
+            ad_anchor_post_side_multiplier: float = 1.0,
+            ad_anchor_event_gate_mode: str = "none",
+            ad_anchor_strong_event_gate: float = 1.0,
+            ad_anchor_page_title_gate: float = 0.4,
+            ad_anchor_msn_gate: float = 0.1,
+            ad_anchor_semantic_sim_min: float = 0.20,
+            ad_anchor_semantic_sim_max: float = 0.65,
+            ad_anchor_semantic_gate_power: float = 1.0,
             ) -> None:
         super().__init__()
 
@@ -321,6 +387,28 @@ class SequentialRetrieval(torch.nn.Module):
         self.hstu_gate_num_blocks = hstu_gate_num_blocks
         self.load_balance_alpha = load_balance_alpha
         self.router_z_beta = router_z_beta
+        self.enable_ad_proximity_weighting = enable_ad_proximity_weighting
+        self.ad_proximity_boost_scale = ad_proximity_boost_scale
+        self.ad_proximity_tau_seconds = ad_proximity_tau_seconds
+        self.ad_proximity_lookahead_seconds = ad_proximity_lookahead_seconds
+        self.ad_proximity_apply_to_non_ad_only = ad_proximity_apply_to_non_ad_only
+        self.enable_ad_anchor_proximity_weighting = enable_ad_anchor_proximity_weighting
+        self.ad_anchor_max_weight = ad_anchor_max_weight
+        self.ad_anchor_sigma_seconds = ad_anchor_sigma_seconds
+        self.ad_anchor_pre_window_seconds = ad_anchor_pre_window_seconds
+        self.ad_anchor_post_window_seconds = ad_anchor_post_window_seconds
+        self.ad_anchor_use_pre = ad_anchor_use_pre
+        self.ad_anchor_use_post = ad_anchor_use_post
+        self.ad_anchor_apply_to_non_ad_only = ad_anchor_apply_to_non_ad_only
+        self.ad_anchor_pre_side_multiplier = ad_anchor_pre_side_multiplier
+        self.ad_anchor_post_side_multiplier = ad_anchor_post_side_multiplier
+        self.ad_anchor_event_gate_mode = ad_anchor_event_gate_mode
+        self.ad_anchor_strong_event_gate = ad_anchor_strong_event_gate
+        self.ad_anchor_page_title_gate = ad_anchor_page_title_gate
+        self.ad_anchor_msn_gate = ad_anchor_msn_gate
+        self.ad_anchor_semantic_sim_min = ad_anchor_semantic_sim_min
+        self.ad_anchor_semantic_sim_max = ad_anchor_semantic_sim_max
+        self.ad_anchor_semantic_gate_power = ad_anchor_semantic_gate_power
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -347,6 +435,47 @@ class SequentialRetrieval(torch.nn.Module):
             logging.info(
                 f"MMoE module: experts={self.num_experts}, type={self.mmoe_expert_type}, "
                 f"layers={self.mmoe_transformer_layers}, heads={self.mmoe_transformer_heads}, tasks={task_ids}"
+            )
+        elif self.multi_task_module_type == "event_type_gated_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            self.multi_task_module = EventTypeGatedMMoE(
+                input_dim=self.model_hidden_size,
+                num_experts=self.num_experts,
+                expert_hidden_dim=self.expert_hidden_dim,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                num_event_types=self.num_event_types,
+                condition_dim=self.event_type_conditioning_dim,
+                dropout=self.dropout_rate,
+                expert_type=self.mmoe_expert_type,
+                transformer_layers=self.mmoe_transformer_layers,
+                transformer_heads=self.mmoe_transformer_heads,
+                transformer_ffn_multiplier=self.mmoe_transformer_ffn_multiplier,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
+            )
+            logging.info(
+                f"P15 EventTypeGatedMMoE: experts={self.num_experts}, type={self.mmoe_expert_type}, tasks={task_ids}"
+            )
+        elif self.multi_task_module_type == "event_group_expert_mmoe":
+            task_ids = self.supervision_train_domains or [0]
+            self.multi_task_module = EventGroupSpecificMMoE(
+                input_dim=self.model_hidden_size,
+                num_shared_experts=self.num_shared_experts,
+                num_group_experts=self.num_task_experts,
+                expert_hidden_dim=self.expert_hidden_dim,
+                output_dim=self.model_hidden_size,
+                task_ids=task_ids,
+                num_event_types=self.num_event_types,
+                condition_dim=self.event_type_conditioning_dim,
+                dropout=self.dropout_rate,
+                gate_hidden_dim=self.mmoe_gate_hidden_dim,
+                load_balance_alpha=self.load_balance_alpha,
+                router_z_beta=self.router_z_beta,
+            )
+            logging.info(
+                f"P16 EventGroupSpecificMMoE: shared={self.num_shared_experts}, group={self.num_task_experts}, tasks={task_ids}"
             )
         elif self.multi_task_module_type == "ple":
             task_ids = self.supervision_train_domains or [0]
@@ -413,9 +542,12 @@ class SequentialRetrieval(torch.nn.Module):
 
         self.event_type_residual_conditioner = None
         if self.enable_event_type_residual_conditioning:
-            conditioner_cls = StabilizedEventTypeResidualConditioner if self.event_type_residual_stabilized else EventTypeResidualConditioner
+            if self.event_type_residual_granularity == "group_expert":
+                conditioner_cls = StabilizedEventGroupExpertResidualConditioner
+            else:
+                conditioner_cls = StabilizedEventTypeResidualConditioner if self.event_type_residual_stabilized else EventTypeResidualConditioner
             extra_kwargs = {}
-            if self.event_type_residual_stabilized:
+            if self.event_type_residual_stabilized or self.event_type_residual_granularity == "group_expert":
                 extra_kwargs = {
                     "max_scale": self.event_type_residual_max_scale,
                     "l2_normalize": self.event_type_residual_l2_normalize,
@@ -632,6 +764,172 @@ class SequentialRetrieval(torch.nn.Module):
         return model, ar_loss, negatives_sampler, model_debug_str, interaction_module_debug_str, sampling_debug_str, loss_debug_str
 
 
+
+    def _compute_ad_proximity_weights(
+        self,
+        next_type_ids: torch.Tensor,
+        label_timestamps: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return multiplicative supervision weights from future-ad proximity.
+
+        For each target position, find the nearest/strongest future Ads anchor
+        by wall-clock time and apply: 1 + boost_scale * exp(-dt / tau).
+        First version applies only to non-ad targets by default.
+        """
+        if (
+            not self.enable_ad_proximity_weighting
+            or next_type_ids is None
+            or label_timestamps is None
+            or self.ad_proximity_boost_scale <= 0
+        ):
+            return None
+
+        # Ads event type IDs from shared/event_types.py: NativeClick=1, SearchClick=2.
+        is_ad = (next_type_ids == 1) | (next_type_ids == 2)
+        times = label_timestamps.float()
+        valid = (next_type_ids > 0) & (times > 0)
+
+        B, N = next_type_ids.shape
+        weights = torch.ones((B, N), dtype=torch.float32, device=next_type_ids.device)
+        if not is_ad.any():
+            return weights
+
+        # Pairwise future-ad time deltas: dt[b, i, j] = t_ad_j - t_i.
+        dt = times.unsqueeze(1) - times.unsqueeze(2)  # [B, N(current), N(anchor)] after transpose logic below
+        # Correction: current index is dim=1, anchor index is dim=2.
+        # times.unsqueeze(1): anchor times; times.unsqueeze(2): current times.
+        # Positive dt means anchor is later in wall-clock time than current event.
+        anchor_is_ad = is_ad.unsqueeze(1).expand(B, N, N)
+        current_valid = valid.unsqueeze(2).expand(B, N, N)
+        future_mask = (
+            anchor_is_ad
+            & current_valid
+            & (dt > 0)
+            & (dt <= float(self.ad_proximity_lookahead_seconds))
+        )
+
+        proximity = torch.exp(-dt.clamp_min(0.0) / float(self.ad_proximity_tau_seconds))
+        proximity = proximity.masked_fill(~future_mask, 0.0)
+        best_proximity = proximity.max(dim=2).values
+
+        apply_mask = valid
+        if self.ad_proximity_apply_to_non_ad_only:
+            apply_mask = apply_mask & (~is_ad)
+
+        weights = weights + float(self.ad_proximity_boost_scale) * best_proximity * apply_mask.float()
+        return weights
+
+    def _compute_ad_anchor_proximity_weights(
+        self,
+        next_type_ids: torch.Tensor,
+        label_timestamps: torch.Tensor,
+        label_embeddings: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """Return multiplicative weights from sharp bidirectional Ads-anchor proximity.
+
+        P19: for each target event, find the nearest Ads anchor on enabled
+        timestamp sides within the configured pre/post windows, then apply a
+        Gaussian local boost. Optional event-type gates downweight high-volume
+        weak signals (e.g. MSN, OutlookSenderDomain).
+        """
+        if (
+            not self.enable_ad_anchor_proximity_weighting
+            or next_type_ids is None
+            or label_timestamps is None
+            or self.ad_anchor_max_weight <= 1.0
+            or self.ad_anchor_sigma_seconds <= 0
+        ):
+            return None
+
+        is_ad = (next_type_ids == 1) | (next_type_ids == 2)
+        times = label_timestamps.float()
+        valid = (next_type_ids > 0) & (times > 0)
+
+        B, N = next_type_ids.shape
+        weights = torch.ones((B, N), dtype=torch.float32, device=next_type_ids.device)
+        if not is_ad.any():
+            return weights
+
+        # dt[b, i, j] = t_anchor_j - t_current_i.
+        # Positive dt: current event is before/follows into a future ad anchor.
+        # Negative dt: current event is after a previous ad anchor.
+        dt = times.unsqueeze(1) - times.unsqueeze(2)
+        anchor_is_ad = is_ad.unsqueeze(1).expand(B, N, N)
+        current_valid = valid.unsqueeze(2).expand(B, N, N)
+
+        eligible = anchor_is_ad & current_valid
+        if self.ad_anchor_use_pre:
+            pre_mask = (dt >= 0) & (dt <= float(self.ad_anchor_pre_window_seconds))
+        else:
+            pre_mask = torch.zeros_like(dt, dtype=torch.bool)
+        if self.ad_anchor_use_post:
+            post_mask = (dt < 0) & ((-dt) <= float(self.ad_anchor_post_window_seconds))
+        else:
+            post_mask = torch.zeros_like(dt, dtype=torch.bool)
+        anchor_mask = eligible & (pre_mask | post_mask)
+
+        abs_dt = dt.abs()
+        proximity = torch.exp(-0.5 * (abs_dt / float(self.ad_anchor_sigma_seconds)).pow(2))
+        side_multiplier = torch.where(
+            dt >= 0,
+            torch.full_like(dt, float(self.ad_anchor_pre_side_multiplier)),
+            torch.full_like(dt, float(self.ad_anchor_post_side_multiplier)),
+        )
+        proximity = (proximity * side_multiplier).masked_fill(~anchor_mask, 0.0)
+        best_proximity = proximity.max(dim=2).values
+
+        apply_mask = valid
+        if self.ad_anchor_apply_to_non_ad_only:
+            apply_mask = apply_mask & (~is_ad)
+
+        mode = str(self.ad_anchor_event_gate_mode or "none")
+        if mode == "semantic_similarity":
+            if label_embeddings is None:
+                raise ValueError("semantic_similarity gate requires label_embeddings")
+            # Pairwise cosine similarity between target-event embedding i and
+            # candidate ad-anchor embedding j. Use the best gated proximity.
+            emb = torch.nn.functional.normalize(label_embeddings.float(), p=2, dim=-1)
+            sim = torch.matmul(emb, emb.transpose(1, 2))  # [B, N(current), N(anchor)]
+            sim_gate = (sim - float(self.ad_anchor_semantic_sim_min)) / max(
+                float(self.ad_anchor_semantic_sim_max - self.ad_anchor_semantic_sim_min), 1e-6
+            )
+            sim_gate = sim_gate.clamp(0.0, 1.0)
+            if float(self.ad_anchor_semantic_gate_power) != 1.0:
+                sim_gate = sim_gate.pow(float(self.ad_anchor_semantic_gate_power))
+            gated_proximity = (proximity * sim_gate).masked_fill(~anchor_mask, 0.0)
+            best_boost_factor = gated_proximity.max(dim=2).values
+        else:
+            gate = torch.ones_like(weights)
+            if mode == "event_type":
+                gate = torch.zeros_like(weights)
+                # Full boost: search/UET/shopping/commercial conversion signals.
+                for event_type_id in (4, 5, 6, 8, 9, 10, 11, 12):
+                    gate = torch.where(
+                        next_type_ids == event_type_id,
+                        torch.full_like(gate, float(self.ad_anchor_strong_event_gate)),
+                        gate,
+                    )
+                # Page titles: useful local context but noisy/high-volume.
+                for event_type_id in (3, 13):
+                    gate = torch.where(
+                        next_type_ids == event_type_id,
+                        torch.full_like(gate, float(self.ad_anchor_page_title_gate)),
+                        gate,
+                    )
+                # MSN can be tuned separately; OutlookSenderDomain remains zero.
+                gate = torch.where(
+                    next_type_ids == 14,
+                    torch.full_like(gate, float(self.ad_anchor_msn_gate)),
+                    gate,
+                )
+            elif mode not in ("none", ""):
+                raise ValueError(f"Unsupported ad_anchor_event_gate_mode={mode}")
+            best_boost_factor = best_proximity * gate
+
+        boost = (float(self.ad_anchor_max_weight) - 1.0) * best_boost_factor * apply_mask.float()
+        return weights + boost
+
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -642,6 +940,7 @@ class SequentialRetrieval(torch.nn.Module):
         ratings: torch.Tensor = None,
         type_ids: torch.Tensor = None,
         next_type_ids: torch.Tensor = None,  # next-event type IDs for proposed7
+        label_timestamps: torch.Tensor = None,
         timestamps: torch.Tensor = None,
         user_ids: torch.Tensor = None,   
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -689,6 +988,8 @@ class SequentialRetrieval(torch.nn.Module):
                     past_embeddings=past_embeddings,
                     past_payloads=past_payloads,
                 )
+            elif isinstance(self.multi_task_module, (EventTypeGatedMMoE, EventGroupSpecificMMoE)):
+                task_embeddings = self.multi_task_module(seq_embeddings, next_type_ids)  # Dict[task_id, (B, N, D)]
             else:
                 task_embeddings = self.multi_task_module(seq_embeddings)  # Dict[task_id, (B, N, D)]
             
@@ -717,6 +1018,20 @@ class SequentialRetrieval(torch.nn.Module):
                 task_weights = domain_mask.float()
                 task_weight_scalar = self.supervision_domain_weights.get(task_id, 1.0)
                 task_weights *= task_weight_scalar
+                ad_proximity_weights = self._compute_ad_proximity_weights(next_type_ids, label_timestamps)
+                if ad_proximity_weights is not None:
+                    task_weights *= ad_proximity_weights
+                    if task_id == 0:
+                        all_metrics["ad_proximity_weight_mean"] = ad_proximity_weights.mean().detach()
+                        all_metrics["ad_proximity_weight_max"] = ad_proximity_weights.max().detach()
+
+                ad_anchor_weights = self._compute_ad_anchor_proximity_weights(next_type_ids, label_timestamps, supervision_embeddings)
+                if ad_anchor_weights is not None:
+                    task_weights *= ad_anchor_weights
+                    if task_id == 0:
+                        all_metrics["ad_anchor_weight_mean"] = ad_anchor_weights.mean().detach()
+                        all_metrics["ad_anchor_weight_max"] = ad_anchor_weights.max().detach()
+                        all_metrics["ad_anchor_weight_frac_gt1"] = (ad_anchor_weights > 1.0).float().mean().detach()
                 
                 if self.supervision_target_position == "last":
                     task_weights = keep_last_nonzero(task_weights)
@@ -778,6 +1093,14 @@ class SequentialRetrieval(torch.nn.Module):
                 )
             supervision_weights[domain_mask] *= weight
 
+        ad_proximity_weights = self._compute_ad_proximity_weights(next_type_ids, label_timestamps)
+        if ad_proximity_weights is not None:
+            supervision_weights *= ad_proximity_weights
+
+        ad_anchor_weights = self._compute_ad_anchor_proximity_weights(next_type_ids, label_timestamps, supervision_embeddings)
+        if ad_anchor_weights is not None:
+            supervision_weights *= ad_anchor_weights
+
         # Config-driven domain restriction (replaces commented-out "train on ads only")
         if self.supervision_train_domains is not None:
             train_mask = torch.zeros_like(label_ids, dtype=torch.bool)
@@ -809,6 +1132,13 @@ class SequentialRetrieval(torch.nn.Module):
             negatives_sampler=self.negatives_sampler['train'],
         )  # [B, N]
 
+        if ad_proximity_weights is not None:
+            metrics["ad_proximity_weight_mean"] = ad_proximity_weights.mean().detach()
+            metrics["ad_proximity_weight_max"] = ad_proximity_weights.max().detach()
+        if ad_anchor_weights is not None:
+            metrics["ad_anchor_weight_mean"] = ad_anchor_weights.mean().detach()
+            metrics["ad_anchor_weight_max"] = ad_anchor_weights.max().detach()
+            metrics["ad_anchor_weight_frac_gt1"] = (ad_anchor_weights > 1.0).float().mean().detach()
         loss = get_weighted_loss(loss, aux_losses, weights=self.loss_weights or {})     # default to be {}
         return seq_embeddings, loss, metrics
 

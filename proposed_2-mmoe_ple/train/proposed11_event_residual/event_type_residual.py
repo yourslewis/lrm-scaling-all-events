@@ -140,3 +140,49 @@ class StabilizedEventTypeResidualConditioner(EventTypeResidualConditioner):
                 "alpha_max": alpha_values.max().detach(),
             }
         return out
+
+
+class StabilizedEventGroupExpertResidualConditioner(torch.nn.Module):
+    """P17: separate bounded residual adapter per target event group.
+
+    This is hierarchical: domain/task MMoE produces the base embedding first;
+    then the target event group selects one residual expert adapter. Unlike P14,
+    the group specialization is a separate adapter bank, not only a condition
+    embedding into one shared adapter.
+    """
+    def __init__(self, input_dim:int, condition_dim:int, num_event_types:int, hidden_dim:int, granularity:str='group_expert', residual_scale:float=1.0, dropout:float=0.1, max_scale:float=0.05, l2_normalize:bool=True):
+        super().__init__()
+        self.input_dim = input_dim; self.residual_scale = residual_scale; self.max_scale = max_scale; self.l2_normalize = l2_normalize
+        self.adapters = nn.ModuleList([
+            nn.Sequential(nn.Linear(input_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden_dim, input_dim))
+            for _ in range(6)
+        ])
+        for adapter in self.adapters:
+            last = adapter[-1]; nn.init.zeros_(last.weight); nn.init.zeros_(last.bias)
+        self.raw_alpha = nn.Parameter(torch.full((6,), -4.0))
+        self.register_buffer('event_type_to_group', build_event_type_to_group_tensor(num_event_types), persistent=False)
+        self._last_metrics = {}
+    def _group_ids(self, next_type_ids: torch.Tensor) -> torch.Tensor:
+        safe = next_type_ids.long().clamp_min(0).clamp_max(self.event_type_to_group.numel() - 1)
+        return self.event_type_to_group[safe]
+    def forward(self, seq_embeddings: torch.Tensor, next_type_ids: torch.Tensor) -> torch.Tensor:
+        group_ids = self._group_ids(next_type_ids.to(seq_embeddings.device))
+        residuals = torch.stack([adapter(seq_embeddings) for adapter in self.adapters], dim=2)  # [B,N,6,D]
+        gather_idx = group_ids.view(*group_ids.shape,1,1).expand(-1,-1,1,seq_embeddings.size(-1))
+        residual = residuals.gather(2, gather_idx).squeeze(2)
+        alpha_all = self.max_scale * torch.sigmoid(self.raw_alpha)
+        alpha = alpha_all[group_ids].unsqueeze(-1)
+        out = seq_embeddings + self.residual_scale * alpha * residual
+        if self.l2_normalize:
+            out = F.normalize(out, p=2, dim=-1)
+        with torch.no_grad():
+            residual_norm = residual.norm(dim=-1).mean(); base_norm = seq_embeddings.norm(dim=-1).mean(); query_norm = out.norm(dim=-1).mean()
+            self._last_metrics = {
+                'residual_norm': residual_norm.detach(),
+                'base_norm': base_norm.detach(),
+                'query_norm': query_norm.detach(),
+                'residual_over_base': (residual_norm / (base_norm + 1e-8)).detach(),
+                'alpha_mean': alpha.mean().detach(),
+                'alpha_max': alpha.max().detach(),
+            }
+        return out

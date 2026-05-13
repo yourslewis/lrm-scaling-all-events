@@ -18,6 +18,7 @@ import logging
 import os
 import glob
 import random
+import json
 
 import time
 
@@ -95,6 +96,9 @@ class Trainer:
         top_k_method: str = "MIPSBruteForceTopK",      # set to be "MIPSBruteForceTopK"
         eval_interval: int = 1,
         full_eval_every_n: int = 1,         # default to be 1
+        eval_every_n_steps: int = 1000,
+        validation_metric_name: str = "ndcg_10",
+        validation_metric_mode: str = "max",
         save_ckpt_every_n: int = 10,
         enable_tf32: bool = False,         # set to be True
         random_seed: int = 42,             # set to be 42
@@ -127,6 +131,12 @@ class Trainer:
         self.top_k_method = top_k_method
         self.eval_interval = eval_interval
         self.full_eval_every_n = full_eval_every_n
+        self.eval_every_n_steps = eval_every_n_steps
+        self.validation_metric_name = validation_metric_name
+        self.validation_metric_mode = validation_metric_mode
+        self.validation_monitor_path = os.path.join(self.output_path, "validation_monitor.json")
+        self.best_validation_metric = None
+        self.best_validation_batch = None
         self.batches_run = 0
         self.save_ckpt_every_n = save_ckpt_every_n
         self.enable_tf32 = enable_tf32
@@ -201,6 +211,7 @@ class Trainer:
         dist.barrier()
 
         self._load_latest_snapshot()
+        self._load_validation_monitor()
         for state in self.opt.state.values():
             for k, v in state.items():
                 if isinstance(v, torch.Tensor):
@@ -270,6 +281,7 @@ class Trainer:
                 )
                 new_ratings = ratings
                 new_timestamps = timestamps[:, :-1]                          # [B, N-1]
+                label_timestamps = timestamps[:, 1:]                          # [B, N-1]
                 leak_next_type = bool(getattr(self._model_unwrapped, "enable_next_event_type_leakage", False))
                 if type_ids is not None:
                     new_type_ids = type_ids[:, 1:] if leak_next_type else type_ids[:, :-1]
@@ -280,8 +292,8 @@ class Trainer:
                 # print(f"new input ids shape: {new_input_ids.shape}")
                 # print(f"new timestamps shape: {new_timestamps.shape}")
                 
-                # Perform evaluation every 1000 iterations
-                if batch_id % 1000 == 0:
+                # Perform validation/evaluation on a configurable step cadence.
+                if self.eval_every_n_steps > 0 and batch_id % self.eval_every_n_steps == 0:
                     if self.rank == 0:
                         logging.info(f"Saving snapshot at batch {batch_id}")
                         self._save_snapshot(batch_id)
@@ -292,10 +304,12 @@ class Trainer:
                     logging.info(f"running evaluation (method={self.eval_method})")
                     torch.cuda.synchronize()
                     torch.cuda.empty_cache()
-                    self.evaluate(
+                    validation_metrics = self.evaluate(
                         batch_id, 
                         epoch
                     )
+                    if self.rank == 0:
+                        self._update_validation_monitor(batch_id, epoch, validation_metrics)
                     torch.cuda.empty_cache()
                     
                     self.model.train()
@@ -313,6 +327,7 @@ class Trainer:
                     ratings=new_ratings,
                     type_ids=new_type_ids,
                     next_type_ids=next_type_ids,
+                    label_timestamps=label_timestamps,
                     timestamps=new_timestamps,
                     user_ids=user_id,
                 )
@@ -364,14 +379,14 @@ class Trainer:
             "sharded"    — sharded multi-rank retrieval eval
         """
         if self.eval_method == "pplx":
-            self.run_evaluation_with_pplx(train_batch_id, train_epoch)
+            return self.run_evaluation_with_pplx(train_batch_id, train_epoch)
         elif self.eval_method == "sharded":
-            self.run_sharded_evaluation(train_batch_id, train_epoch)
+            return self.run_sharded_evaluation(train_batch_id, train_epoch)
         elif self.eval_method == "retrieval":
-            self.run_evaluation(train_batch_id, train_epoch)
+            return self.run_evaluation(train_batch_id, train_epoch)
         else:
             logging.warning(f"Unknown eval_method '{self.eval_method}', falling back to pplx")
-            self.run_evaluation_with_pplx(train_batch_id, train_epoch)
+            return self.run_evaluation_with_pplx(train_batch_id, train_epoch)
 
     def _create_optimizer(self) -> torch.optim.Optimizer:
         """Config-driven optimizer factory."""
@@ -470,6 +485,7 @@ class Trainer:
                 f"in {time.time() - eval_start_time:.2f}s: "
                 + ", ".join(f"{k} {final_metrics[k].item():.4f}" for k in final_metrics)
         )
+        return final_metrics
 
 
 
@@ -508,7 +524,7 @@ class Trainer:
                 k: _avg(v, rank=self.rank, world_size=self.world_size)
                 for k, v in dummy_metrics.items()
             }
-            return
+            return final_metrics
 
         eval_dict_all = defaultdict(list)
         eval_start_time = time.time()
@@ -588,6 +604,7 @@ class Trainer:
                 + ", ".join(f"{k} {final_metrics[k].item():.4f}" for k in final_metrics)
         )
         # logging.info("done eval")
+        return final_metrics
 
     def run_evaluation(self, train_batch_id, train_epoch) -> None:
         self.model.eval()
@@ -653,6 +670,111 @@ class Trainer:
             f"rank {self.rank}: eval @ 'eval iteration' {batch_id} 'train_iteration' {train_batch_id} 'epoch' {train_epoch} in {time.time() - eval_start_time:.2f}s: "
             f"NDCG@10 {ndcg_10:.4f}, NDCG@50 {ndcg_50:.4f}, HR@10 {hr_10:.4f}, HR@50 {hr_50:.4f}, MRR {mrr:.4f}"
         )
+        return {
+            "ndcg_10": ndcg_10,
+            "ndcg_50": ndcg_50,
+            "hr_10": hr_10,
+            "hr_50": hr_50,
+            "mrr": mrr,
+        }
+
+    def _metric_to_float(self, value):
+        if value is None:
+            return None
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.detach().float().mean().cpu().item())
+        return float(value)
+
+    def _load_validation_monitor(self) -> None:
+        if self.rank != 0:
+            return
+        if not os.path.exists(self.validation_monitor_path):
+            return
+        try:
+            with open(self.validation_monitor_path, "r") as f:
+                state = json.load(f)
+            best = state.get("best", {})
+            self.best_validation_metric = best.get("value")
+            self.best_validation_batch = best.get("batch")
+            logging.info(
+                f"Validation monitor loaded: best {self.validation_metric_name} "
+                f"{self.best_validation_metric} @ batch {self.best_validation_batch}"
+            )
+        except Exception as e:
+            logging.warning(f"Failed to load validation monitor {self.validation_monitor_path}: {e}")
+
+    def _update_validation_monitor(self, batch_id: int, epoch: int, metrics) -> None:
+        if metrics is None:
+            logging.warning("Validation monitor skipped: evaluation returned no metrics")
+            return
+        metric_value = self._metric_to_float(metrics.get(self.validation_metric_name))
+        if metric_value is None:
+            logging.warning(
+                f"Validation monitor skipped: metric '{self.validation_metric_name}' missing/empty; "
+                f"available={sorted(metrics.keys())}"
+            )
+            return
+
+        mode = (self.validation_metric_mode or "max").lower()
+        if mode not in {"max", "min"}:
+            logging.warning(f"Unknown validation_metric_mode={self.validation_metric_mode}; using max")
+            mode = "max"
+        improved = (
+            self.best_validation_metric is None
+            or (metric_value > self.best_validation_metric if mode == "max" else metric_value < self.best_validation_metric)
+        )
+        metric_snapshot = {k: self._metric_to_float(v) for k, v in metrics.items()}
+        state = {
+            "metric_name": self.validation_metric_name,
+            "metric_mode": mode,
+            "latest": {"batch": batch_id, "epoch": epoch, "value": metric_value, "metrics": metric_snapshot},
+            "best": {
+                "batch": self.best_validation_batch,
+                "value": self.best_validation_metric,
+                "checkpoint": None,
+            },
+        }
+
+        if improved:
+            self.best_validation_metric = metric_value
+            self.best_validation_batch = batch_id
+            safe_metric = self.validation_metric_name.replace("/", "_")
+            best_ckpt_path = os.path.join(self.snapshot_dir, f"best_checkpoint_{safe_metric}.pt")
+            snapshot_path = os.path.join(self.snapshot_dir, f"checkpoint_batch{batch_id:07d}.pt")
+            if os.path.exists(snapshot_path):
+                shutil.copy2(snapshot_path, best_ckpt_path)
+            else:
+                best_ckpt_path = None
+                logging.warning(f"Validation improved but snapshot missing: {snapshot_path}")
+            state["best"] = {
+                "batch": batch_id,
+                "epoch": epoch,
+                "value": metric_value,
+                "checkpoint": best_ckpt_path,
+                "metrics": metric_snapshot,
+            }
+            logging.info(
+                f"Validation monitor: NEW BEST {self.validation_metric_name}={metric_value:.6f} "
+                f"at batch {batch_id}; checkpoint={best_ckpt_path}"
+            )
+        else:
+            state["best"] = {
+                "batch": self.best_validation_batch,
+                "value": self.best_validation_metric,
+                "checkpoint": os.path.join(self.snapshot_dir, f"best_checkpoint_{self.validation_metric_name.replace('/', '_')}.pt"),
+            }
+            logging.info(
+                f"Validation monitor: latest {self.validation_metric_name}={metric_value:.6f} "
+                f"at batch {batch_id}; best={self.best_validation_metric:.6f} @ batch {self.best_validation_batch}"
+            )
+
+        os.makedirs(self.output_path, exist_ok=True)
+        tmp_path = self.validation_monitor_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(state, f, indent=2, sort_keys=True)
+        os.replace(tmp_path, self.validation_monitor_path)
 
     def cleanup(self) -> None:
         dist.destroy_process_group()
