@@ -162,6 +162,9 @@ def make_model(
     ad_anchor_pre_side_multiplier: float = 1.0,
     ad_anchor_post_side_multiplier: float = 1.0,
     ad_anchor_event_gate_mode: str = "none",
+    ad_anchor_semantic_sim_min: float = 0.20,
+    ad_anchor_semantic_sim_max: float = 0.65,
+    ad_anchor_semantic_gate_power: float = 1.0,
 ) -> torch.nn.Module:
     """
     Create and return the model for training.
@@ -231,6 +234,9 @@ def make_model(
         ad_anchor_pre_side_multiplier=ad_anchor_pre_side_multiplier,
         ad_anchor_post_side_multiplier=ad_anchor_post_side_multiplier,
         ad_anchor_event_gate_mode=ad_anchor_event_gate_mode,
+        ad_anchor_semantic_sim_min=ad_anchor_semantic_sim_min,
+        ad_anchor_semantic_sim_max=ad_anchor_semantic_sim_max,
+        ad_anchor_semantic_gate_power=ad_anchor_semantic_gate_power,
         )
     return model
 
@@ -306,6 +312,9 @@ class SequentialRetrieval(torch.nn.Module):
             ad_anchor_pre_side_multiplier: float = 1.0,
             ad_anchor_post_side_multiplier: float = 1.0,
             ad_anchor_event_gate_mode: str = "none",
+            ad_anchor_semantic_sim_min: float = 0.20,
+            ad_anchor_semantic_sim_max: float = 0.65,
+            ad_anchor_semantic_gate_power: float = 1.0,
             ) -> None:
         super().__init__()
 
@@ -385,6 +394,9 @@ class SequentialRetrieval(torch.nn.Module):
         self.ad_anchor_pre_side_multiplier = ad_anchor_pre_side_multiplier
         self.ad_anchor_post_side_multiplier = ad_anchor_post_side_multiplier
         self.ad_anchor_event_gate_mode = ad_anchor_event_gate_mode
+        self.ad_anchor_semantic_sim_min = ad_anchor_semantic_sim_min
+        self.ad_anchor_semantic_sim_max = ad_anchor_semantic_sim_max
+        self.ad_anchor_semantic_gate_power = ad_anchor_semantic_gate_power
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -755,6 +767,7 @@ class SequentialRetrieval(torch.nn.Module):
         self,
         next_type_ids: torch.Tensor,
         label_timestamps: torch.Tensor,
+        label_embeddings: torch.Tensor = None,
     ) -> torch.Tensor:
         """Return multiplicative weights from sharp bidirectional Ads-anchor proximity.
 
@@ -813,22 +826,39 @@ class SequentialRetrieval(torch.nn.Module):
         if self.ad_anchor_apply_to_non_ad_only:
             apply_mask = apply_mask & (~is_ad)
 
-        gate = torch.ones_like(weights)
         mode = str(self.ad_anchor_event_gate_mode or "none")
-        if mode == "event_type":
-            gate = torch.zeros_like(weights)
-            # Full boost: search/UET/shopping/commercial conversion signals.
-            for event_type_id in (4, 5, 6, 8, 9, 10, 11, 12):
-                gate = torch.where(next_type_ids == event_type_id, torch.ones_like(gate), gate)
-            # Page titles: useful local context but noisy/high-volume.
-            for event_type_id in (3, 13):
-                gate = torch.where(next_type_ids == event_type_id, torch.full_like(gate, 0.4), gate)
-            # MSN gets only a tiny local boost; OutlookSenderDomain remains zero.
-            gate = torch.where(next_type_ids == 14, torch.full_like(gate, 0.1), gate)
-        elif mode not in ("none", ""):
-            raise ValueError(f"Unsupported ad_anchor_event_gate_mode={mode}")
+        if mode == "semantic_similarity":
+            if label_embeddings is None:
+                raise ValueError("semantic_similarity gate requires label_embeddings")
+            # Pairwise cosine similarity between target-event embedding i and
+            # candidate ad-anchor embedding j. Use the best gated proximity.
+            emb = torch.nn.functional.normalize(label_embeddings.float(), p=2, dim=-1)
+            sim = torch.matmul(emb, emb.transpose(1, 2))  # [B, N(current), N(anchor)]
+            sim_gate = (sim - float(self.ad_anchor_semantic_sim_min)) / max(
+                float(self.ad_anchor_semantic_sim_max - self.ad_anchor_semantic_sim_min), 1e-6
+            )
+            sim_gate = sim_gate.clamp(0.0, 1.0)
+            if float(self.ad_anchor_semantic_gate_power) != 1.0:
+                sim_gate = sim_gate.pow(float(self.ad_anchor_semantic_gate_power))
+            gated_proximity = (proximity * sim_gate).masked_fill(~anchor_mask, 0.0)
+            best_boost_factor = gated_proximity.max(dim=2).values
+        else:
+            gate = torch.ones_like(weights)
+            if mode == "event_type":
+                gate = torch.zeros_like(weights)
+                # Full boost: search/UET/shopping/commercial conversion signals.
+                for event_type_id in (4, 5, 6, 8, 9, 10, 11, 12):
+                    gate = torch.where(next_type_ids == event_type_id, torch.ones_like(gate), gate)
+                # Page titles: useful local context but noisy/high-volume.
+                for event_type_id in (3, 13):
+                    gate = torch.where(next_type_ids == event_type_id, torch.full_like(gate, 0.4), gate)
+                # MSN gets only a tiny local boost; OutlookSenderDomain remains zero.
+                gate = torch.where(next_type_ids == 14, torch.full_like(gate, 0.1), gate)
+            elif mode not in ("none", ""):
+                raise ValueError(f"Unsupported ad_anchor_event_gate_mode={mode}")
+            best_boost_factor = best_proximity * gate
 
-        boost = (float(self.ad_anchor_max_weight) - 1.0) * best_proximity * gate * apply_mask.float()
+        boost = (float(self.ad_anchor_max_weight) - 1.0) * best_boost_factor * apply_mask.float()
         return weights + boost
 
 
@@ -925,7 +955,7 @@ class SequentialRetrieval(torch.nn.Module):
                         all_metrics["ad_proximity_weight_mean"] = ad_proximity_weights.mean().detach()
                         all_metrics["ad_proximity_weight_max"] = ad_proximity_weights.max().detach()
 
-                ad_anchor_weights = self._compute_ad_anchor_proximity_weights(next_type_ids, label_timestamps)
+                ad_anchor_weights = self._compute_ad_anchor_proximity_weights(next_type_ids, label_timestamps, supervision_embeddings)
                 if ad_anchor_weights is not None:
                     task_weights *= ad_anchor_weights
                     if task_id == 0:
@@ -997,7 +1027,7 @@ class SequentialRetrieval(torch.nn.Module):
         if ad_proximity_weights is not None:
             supervision_weights *= ad_proximity_weights
 
-        ad_anchor_weights = self._compute_ad_anchor_proximity_weights(next_type_ids, label_timestamps)
+        ad_anchor_weights = self._compute_ad_anchor_proximity_weights(next_type_ids, label_timestamps, supervision_embeddings)
         if ad_anchor_weights is not None:
             supervision_weights *= ad_anchor_weights
 
