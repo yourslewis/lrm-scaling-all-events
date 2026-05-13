@@ -1,0 +1,95 @@
+# ============================================================
+# File: proposed8_balanced_mmoe.gin
+# Proposed8: MMoE with equal domain weights
+#   - Same architecture as proposed2a (HSTU + 4 MLP experts)
+#   - Equal domain weights (all 1.0) instead of {0:1.0, others:0.1}
+#   - Tests whether sparse event type collapse is due to weight starvation
+# ============================================================
+
+get_reco_dataset.dataset_name = "benchmarkv4_all_events_v2"
+get_reco_dataset.experiment_name = "semantic_next_event_prediction"
+get_reco_dataset.max_sequence_length = 200
+get_reco_dataset.positional_sampling_ratio = 1.0
+
+make_model.main_module = "HSTU"
+make_model.embedding_module_type = "MultiDomainPrecomputed"
+make_model.item_embedding_dim = 128
+make_model.interaction_module_type = "DotProduct"
+make_model.user_embedding_norm = "l2_norm"
+make_model.input_preproc_module_type = "LearnablePositionalEmbeddingEventTypeEmbeddingInputFeaturesPreprocessor"
+make_model.dropout_rate = 0.2
+make_model.rating_embedding_dim = 5
+make_model.loss_module = "SampledSoftmaxLoss"
+make_model.temperature = 0.05
+make_model.num_negatives = 256
+make_model.loss_activation_checkpoint = False
+make_model.sampling_strategy = "InBatch"
+make_model.item_l2_norm = True
+make_model.l2_norm_eps = 1e-6
+
+# Same MMoE as proposed2a
+make_model.multi_task_module_type = "mmoe"
+make_model.num_experts = 4
+make_model.expert_hidden_dim = 128
+
+# KEY CHANGE: equal domain weights (proposed2a used {0:1.0, others:0.1})
+make_model.supervision_domain_weights = {0: 1.0, 1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}
+make_model.supervision_train_domains = [0, 1, 2, 3, 4]
+
+Trainer.local_batch_size = 32
+Trainer.eval_batch_size = 32
+Trainer.main_module_bf16 = False
+Trainer.num_epochs = 100
+Trainer.learning_rate = 1e-3
+Trainer.weight_decay = 0
+Trainer.num_warmup_steps = 100
+Trainer.top_k_method = "MIPSBruteForceTopK"
+Trainer.enable_tf32 = True
+Trainer.eval_method = "pplx"
+Trainer.eval_max_batches = 50
+
+create_data_loader.num_workers = 1
+
+hstu_encoder.num_blocks = 16
+hstu_encoder.num_heads = 4
+hstu_encoder.dqk = 32
+hstu_encoder.dv = 32
+hstu_encoder.linear_dropout_rate = 0.2
+
+# P12: target-event-group residual heads (identity-initialized)
+make_model.enable_event_type_residual_conditioning = True
+make_model.event_type_residual_granularity = "group"
+make_model.event_type_conditioning_dim = 32
+make_model.event_type_residual_hidden_dim = 128
+make_model.event_type_residual_scale = 1.0
+
+# P14: stabilized target-event-group residual heads
+make_model.event_type_residual_stabilized = True
+make_model.event_type_residual_max_scale = 0.05
+make_model.event_type_residual_l2_normalize = True
+
+# P19C: sharp bidirectional ad-anchor weighting with semantic-similarity gate.
+# Non-ad targets within +/-10m of NativeClick/SearchClick anchors receive
+# a sharp local boost. Gate strength is based on cosine similarity between
+# the target event embedding and nearby ad-anchor embedding.
+make_model.enable_ad_proximity_weighting = False
+
+make_model.enable_ad_anchor_proximity_weighting = True
+make_model.ad_anchor_max_weight = 4.0
+make_model.ad_anchor_sigma_seconds = 180.0
+make_model.ad_anchor_pre_window_seconds = 600.0
+make_model.ad_anchor_post_window_seconds = 600.0
+make_model.ad_anchor_use_pre = True
+make_model.ad_anchor_use_post = True
+make_model.ad_anchor_apply_to_non_ad_only = True
+make_model.ad_anchor_pre_side_multiplier = 1.0
+make_model.ad_anchor_post_side_multiplier = 1.0
+make_model.ad_anchor_event_gate_mode = "semantic_similarity"
+make_model.ad_anchor_semantic_sim_min = 0.20
+make_model.ad_anchor_semantic_sim_max = 0.65
+make_model.ad_anchor_semantic_gate_power = 1.0
+
+# Validation monitor / checkpoint selection
+Trainer.eval_every_n_steps = 1000
+Trainer.validation_metric_name = "ndcg_10"
+Trainer.validation_metric_mode = "max"
