@@ -162,6 +162,9 @@ def make_model(
     ad_anchor_pre_side_multiplier: float = 1.0,
     ad_anchor_post_side_multiplier: float = 1.0,
     ad_anchor_event_gate_mode: str = "none",
+    ad_anchor_strong_event_gate: float = 1.0,
+    ad_anchor_page_title_gate: float = 0.4,
+    ad_anchor_msn_gate: float = 0.1,
     ad_anchor_semantic_sim_min: float = 0.20,
     ad_anchor_semantic_sim_max: float = 0.65,
     ad_anchor_semantic_gate_power: float = 1.0,
@@ -234,6 +237,9 @@ def make_model(
         ad_anchor_pre_side_multiplier=ad_anchor_pre_side_multiplier,
         ad_anchor_post_side_multiplier=ad_anchor_post_side_multiplier,
         ad_anchor_event_gate_mode=ad_anchor_event_gate_mode,
+        ad_anchor_strong_event_gate=ad_anchor_strong_event_gate,
+        ad_anchor_page_title_gate=ad_anchor_page_title_gate,
+        ad_anchor_msn_gate=ad_anchor_msn_gate,
         ad_anchor_semantic_sim_min=ad_anchor_semantic_sim_min,
         ad_anchor_semantic_sim_max=ad_anchor_semantic_sim_max,
         ad_anchor_semantic_gate_power=ad_anchor_semantic_gate_power,
@@ -312,6 +318,9 @@ class SequentialRetrieval(torch.nn.Module):
             ad_anchor_pre_side_multiplier: float = 1.0,
             ad_anchor_post_side_multiplier: float = 1.0,
             ad_anchor_event_gate_mode: str = "none",
+            ad_anchor_strong_event_gate: float = 1.0,
+            ad_anchor_page_title_gate: float = 0.4,
+            ad_anchor_msn_gate: float = 0.1,
             ad_anchor_semantic_sim_min: float = 0.20,
             ad_anchor_semantic_sim_max: float = 0.65,
             ad_anchor_semantic_gate_power: float = 1.0,
@@ -394,6 +403,9 @@ class SequentialRetrieval(torch.nn.Module):
         self.ad_anchor_pre_side_multiplier = ad_anchor_pre_side_multiplier
         self.ad_anchor_post_side_multiplier = ad_anchor_post_side_multiplier
         self.ad_anchor_event_gate_mode = ad_anchor_event_gate_mode
+        self.ad_anchor_strong_event_gate = ad_anchor_strong_event_gate
+        self.ad_anchor_page_title_gate = ad_anchor_page_title_gate
+        self.ad_anchor_msn_gate = ad_anchor_msn_gate
         self.ad_anchor_semantic_sim_min = ad_anchor_semantic_sim_min
         self.ad_anchor_semantic_sim_max = ad_anchor_semantic_sim_max
         self.ad_anchor_semantic_gate_power = ad_anchor_semantic_gate_power
@@ -848,12 +860,24 @@ class SequentialRetrieval(torch.nn.Module):
                 gate = torch.zeros_like(weights)
                 # Full boost: search/UET/shopping/commercial conversion signals.
                 for event_type_id in (4, 5, 6, 8, 9, 10, 11, 12):
-                    gate = torch.where(next_type_ids == event_type_id, torch.ones_like(gate), gate)
+                    gate = torch.where(
+                        next_type_ids == event_type_id,
+                        torch.full_like(gate, float(self.ad_anchor_strong_event_gate)),
+                        gate,
+                    )
                 # Page titles: useful local context but noisy/high-volume.
                 for event_type_id in (3, 13):
-                    gate = torch.where(next_type_ids == event_type_id, torch.full_like(gate, 0.4), gate)
-                # MSN gets only a tiny local boost; OutlookSenderDomain remains zero.
-                gate = torch.where(next_type_ids == 14, torch.full_like(gate, 0.1), gate)
+                    gate = torch.where(
+                        next_type_ids == event_type_id,
+                        torch.full_like(gate, float(self.ad_anchor_page_title_gate)),
+                        gate,
+                    )
+                # MSN can be tuned separately; OutlookSenderDomain remains zero.
+                gate = torch.where(
+                    next_type_ids == 14,
+                    torch.full_like(gate, float(self.ad_anchor_msn_gate)),
+                    gate,
+                )
             elif mode not in ("none", ""):
                 raise ValueError(f"Unsupported ad_anchor_event_gate_mode={mode}")
             best_boost_factor = best_proximity * gate
