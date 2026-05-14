@@ -934,7 +934,10 @@ class SequentialRetrieval(torch.nn.Module):
                 raise ValueError("semantic_similarity gate requires label_embeddings")
             # Pairwise cosine similarity between target-event embedding i and
             # candidate ad-anchor embedding j. Use the best gated proximity.
-            emb = torch.nn.functional.normalize(label_embeddings.float(), p=2, dim=-1)
+            # Treat semantic similarity as a detached sample-weighting heuristic.
+            # Do not backprop through cosine/gate: fractional powers (power < 1)
+            # have singular gradients near zero and caused NaNs in P22.
+            emb = torch.nn.functional.normalize(label_embeddings.detach().float(), p=2, dim=-1)
             sim = torch.matmul(emb, emb.transpose(1, 2))  # [B, N(current), N(anchor)]
             sim_gate = (sim - float(self.ad_anchor_semantic_sim_min)) / max(
                 float(self.ad_anchor_semantic_sim_max - self.ad_anchor_semantic_sim_min), 1e-6
@@ -942,7 +945,8 @@ class SequentialRetrieval(torch.nn.Module):
             sim_gate = sim_gate.clamp(0.0, 1.0)
             if float(self.ad_anchor_semantic_gate_power) != 1.0:
                 sim_gate = sim_gate.pow(float(self.ad_anchor_semantic_gate_power))
-            gated_proximity = (proximity * sim_gate).masked_fill(~anchor_mask, 0.0)
+            sim_gate = torch.nan_to_num(sim_gate, nan=0.0, posinf=1.0, neginf=0.0).detach()
+            gated_proximity = (proximity.detach() * sim_gate).masked_fill(~anchor_mask, 0.0)
             best_boost_factor = gated_proximity.max(dim=2).values
         else:
             gate = torch.ones_like(weights)
