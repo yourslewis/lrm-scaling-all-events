@@ -167,6 +167,7 @@ def make_model(
     ad_anchor_strong_event_gate: float = 1.0,
     ad_anchor_page_title_gate: float = 0.4,
     ad_anchor_msn_gate: float = 0.1,
+    ad_anchor_outlook_gate: float = 0.0,
     ad_anchor_empirical_prob_path: str = "",
     ad_anchor_empirical_p_low: float = 0.0,
     ad_anchor_empirical_p_high: float = 0.20,
@@ -246,6 +247,7 @@ def make_model(
         ad_anchor_strong_event_gate=ad_anchor_strong_event_gate,
         ad_anchor_page_title_gate=ad_anchor_page_title_gate,
         ad_anchor_msn_gate=ad_anchor_msn_gate,
+        ad_anchor_outlook_gate=ad_anchor_outlook_gate,
         ad_anchor_empirical_prob_path=ad_anchor_empirical_prob_path,
         ad_anchor_empirical_p_low=ad_anchor_empirical_p_low,
         ad_anchor_empirical_p_high=ad_anchor_empirical_p_high,
@@ -331,6 +333,7 @@ class SequentialRetrieval(torch.nn.Module):
             ad_anchor_strong_event_gate: float = 1.0,
             ad_anchor_page_title_gate: float = 0.4,
             ad_anchor_msn_gate: float = 0.1,
+            ad_anchor_outlook_gate: float = 0.0,
             ad_anchor_empirical_prob_path: str = "",
             ad_anchor_empirical_p_low: float = 0.0,
             ad_anchor_empirical_p_high: float = 0.20,
@@ -420,6 +423,7 @@ class SequentialRetrieval(torch.nn.Module):
         self.ad_anchor_strong_event_gate = ad_anchor_strong_event_gate
         self.ad_anchor_page_title_gate = ad_anchor_page_title_gate
         self.ad_anchor_msn_gate = ad_anchor_msn_gate
+        self.ad_anchor_outlook_gate = ad_anchor_outlook_gate
         self.ad_anchor_empirical_prob_path = ad_anchor_empirical_prob_path
         self.ad_anchor_empirical_p_low = ad_anchor_empirical_p_low
         self.ad_anchor_empirical_p_high = ad_anchor_empirical_p_high
@@ -966,10 +970,15 @@ class SequentialRetrieval(torch.nn.Module):
                         torch.full_like(gate, float(self.ad_anchor_page_title_gate)),
                         gate,
                     )
-                # MSN can be tuned separately; OutlookSenderDomain remains zero.
+                # MSN and Outlook can be tuned separately.
                 gate = torch.where(
                     next_type_ids == 14,
                     torch.full_like(gate, float(self.ad_anchor_msn_gate)),
+                    gate,
+                )
+                gate = torch.where(
+                    next_type_ids == 7,
+                    torch.full_like(gate, float(self.ad_anchor_outlook_gate)),
                     gate,
                 )
             elif mode == "empirical_prob":
