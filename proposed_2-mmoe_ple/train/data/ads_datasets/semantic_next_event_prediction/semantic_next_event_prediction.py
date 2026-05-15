@@ -1,10 +1,63 @@
+import hashlib
+import math
 import pandas as pd
 import torch
 from torch.utils.data import IterableDataset
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from tqdm import tqdm
 import logging
 from torch.utils.data import get_worker_info
+
+
+
+def _stable_row_seed(user_id, seed: int) -> int:
+    digest = hashlib.blake2b(f"{seed}:{user_id}".encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, byteorder="little", signed=False) % (2**63 - 1)
+
+
+def _window_and_sample_history(
+    user_id,
+    encoded_ids: List[int],
+    types: List[str],
+    timestamps: List[int],
+    original_sequence_length: Optional[int],
+    history_keep_rate: float,
+    history_sample_seed: int,
+) -> Tuple[List[int], List[str], List[int]]:
+    if not (0.0 < history_keep_rate <= 1.0):
+        raise ValueError(f"history_keep_rate must be in (0, 1], got {history_keep_rate}")
+    if not encoded_ids:
+        return encoded_ids, types, timestamps
+
+    # Keep the prediction target fixed. Window/drop only the history before it.
+    target_id = encoded_ids[-1]
+    target_type = types[-1] if types else "UNK"
+    target_ts = timestamps[-1] if timestamps else 0
+
+    history_ids = encoded_ids[:-1]
+    history_types = types[:-1] if types else []
+    history_ts = timestamps[:-1] if timestamps else []
+
+    if original_sequence_length is not None and original_sequence_length > 0:
+        history_ids = history_ids[-original_sequence_length:]
+        history_types = history_types[-original_sequence_length:] if history_types else []
+        history_ts = history_ts[-original_sequence_length:] if history_ts else []
+
+    if history_keep_rate < 1.0 and history_ids:
+        keep_n = int(math.ceil(len(history_ids) * history_keep_rate))
+        keep_n = max(1, min(len(history_ids), keep_n))
+        generator = torch.Generator()
+        generator.manual_seed(_stable_row_seed(user_id, history_sample_seed))
+        keep_idx = torch.randperm(len(history_ids), generator=generator)[:keep_n].sort().values.tolist()
+        history_ids = [history_ids[i] for i in keep_idx]
+        history_types = [history_types[i] for i in keep_idx] if history_types else []
+        history_ts = [history_ts[i] for i in keep_idx] if history_ts else []
+
+    return (
+        history_ids + [target_id],
+        (history_types + [target_type]) if types else [],
+        (history_ts + [target_ts]) if timestamps else [],
+    )
 
 EVENT_TYPE_DICT = {
     "UNK": 0,
@@ -24,12 +77,25 @@ EVENT_TYPE_DICT = {
 
 
 class TrainIterableDataset(IterableDataset):
-    def __init__(self, filesystem, parquet_dir: str, max_sequence_length: int, rank: int = 0, world_size: int = 1):
+    def __init__(
+        self,
+        filesystem,
+        parquet_dir: str,
+        max_sequence_length: int,
+        rank: int = 0,
+        world_size: int = 1,
+        original_sequence_length: Optional[int] = None,
+        history_keep_rate: float = 1.0,
+        history_sample_seed: int = 42,
+    ):
         self.fs = filesystem
         self.parquet_dir = parquet_dir
         self.max_sequence_length = max_sequence_length+1     # apply shifting and lengths-1 inside model
         self.rank = rank
         self.world_size = world_size
+        self.original_sequence_length = original_sequence_length
+        self.history_keep_rate = history_keep_rate
+        self.history_sample_seed = history_sample_seed
 
         # Collect file paths
         self.file_paths = []
@@ -54,7 +120,15 @@ class TrainIterableDataset(IterableDataset):
     def _process_row(self, row) -> Dict[str, torch.Tensor]:
         user_id, encoded_ids, timestamps = row.user_id, list(row.encoded_ids), list(row.timestamps_unix)
         types = list(row.types) if hasattr(row, 'types') else []
-        input_ids, timestamps = encoded_ids, timestamps
+        input_ids, types, timestamps = _window_and_sample_history(
+            user_id,
+            encoded_ids,
+            types,
+            timestamps,
+            self.original_sequence_length,
+            self.history_keep_rate,
+            self.history_sample_seed,
+        )
 
         input_ids, length = self._truncate_or_pad_seq(input_ids, self.max_sequence_length)
         type_ids = [EVENT_TYPE_DICT.get(t, 0) for t in types]
@@ -98,12 +172,25 @@ class TrainIterableDataset(IterableDataset):
 
 
 class EvalIterableDataset(IterableDataset):
-    def __init__(self, filesystem, parquet_dir: str, max_sequence_length: int, rank: int = 0, world_size: int = 1):
+    def __init__(
+        self,
+        filesystem,
+        parquet_dir: str,
+        max_sequence_length: int,
+        rank: int = 0,
+        world_size: int = 1,
+        original_sequence_length: Optional[int] = None,
+        history_keep_rate: float = 1.0,
+        history_sample_seed: int = 42,
+    ):
         self.fs = filesystem
         self.parquet_dir = parquet_dir
         self.max_sequence_length = max_sequence_length+1     # apply shifting and lengths-1 inside model
         self.rank = rank
         self.world_size = world_size
+        self.original_sequence_length = original_sequence_length
+        self.history_keep_rate = history_keep_rate
+        self.history_sample_seed = history_sample_seed
 
         # Collect file paths
         self.file_paths = []
@@ -128,7 +215,15 @@ class EvalIterableDataset(IterableDataset):
     def _process_row(self, row) -> Dict[str, torch.Tensor]:
         user_id, encoded_ids, timestamps = row.user_id, list(row.encoded_ids), list(row.timestamps_unix)
         types = list(row.types) if hasattr(row, 'types') else []
-        input_ids, timestamps = encoded_ids, timestamps
+        input_ids, types, timestamps = _window_and_sample_history(
+            user_id,
+            encoded_ids,
+            types,
+            timestamps,
+            self.original_sequence_length,
+            self.history_keep_rate,
+            self.history_sample_seed,
+        )
 
         input_ids, length = self._truncate_or_pad_seq(input_ids, self.max_sequence_length)
         type_ids = [EVENT_TYPE_DICT.get(t, 0) for t in types]

@@ -71,6 +71,9 @@ def get_reco_dataset(
     positional_sampling_ratio: float = 1.0,
     rank: int = 0,
     world_size: int = 1,
+    original_sequence_length: Optional[int] = None,
+    history_keep_rate: float = 1.0,
+    history_sample_seed: int = 42,
 ) -> RecoDataset:
     """
     Example path for corp: 
@@ -228,8 +231,26 @@ def get_reco_dataset(
     elif dataset_name == "benchmarkv4_all_events_v2":
         if experiment_name == "semantic_next_event_prediction":
             local_fs = fsspec.filesystem('file')
-            train_dataset = semantic_next_event_prediction.TrainIterableDataset(local_fs, os.path.join(prefix, "train"), max_sequence_length, rank, world_size)
-            eval_dataset = semantic_next_event_prediction.EvalIterableDataset(local_fs, os.path.join(prefix, "eval"), max_sequence_length, rank, world_size)
+            train_dataset = semantic_next_event_prediction.TrainIterableDataset(
+                local_fs,
+                os.path.join(prefix, "train"),
+                max_sequence_length,
+                rank,
+                world_size,
+                original_sequence_length=original_sequence_length,
+                history_keep_rate=history_keep_rate,
+                history_sample_seed=history_sample_seed,
+            )
+            eval_dataset = semantic_next_event_prediction.EvalIterableDataset(
+                local_fs,
+                os.path.join(prefix, "eval"),
+                max_sequence_length,
+                rank,
+                world_size,
+                original_sequence_length=original_sequence_length,
+                history_keep_rate=history_keep_rate,
+                history_sample_seed=history_sample_seed,
+            )
         else:
             raise ValueError(f"Unknown experiment {experiment_name} for dataset {dataset_name}")
         return RecoDataset(
