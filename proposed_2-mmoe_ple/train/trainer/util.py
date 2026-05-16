@@ -1104,7 +1104,7 @@ class SequentialRetrieval(torch.nn.Module):
                     supervision_embeddings=supervision_embeddings,
                     supervision_weights=task_weights,
                     negatives_sampler=self.negatives_sampler['train'],
-                    supervision_type_ids=next_type_ids if self.training else None,
+                    supervision_type_ids=next_type_ids if torch.is_grad_enabled() else None,
                 )
                 task_loss = get_weighted_loss(task_loss, task_aux, weights=self.loss_weights or {})
                 total_loss = total_loss + task_loss
@@ -1192,7 +1192,7 @@ class SequentialRetrieval(torch.nn.Module):
             supervision_embeddings=supervision_embeddings,    # [B, N, D]    
             supervision_weights=supervision_weights,
             negatives_sampler=self.negatives_sampler['train'],
-            supervision_type_ids=next_type_ids if self.training else None,
+            supervision_type_ids=next_type_ids if torch.is_grad_enabled() else None,
         )  # [B, N]
 
         if ad_proximity_weights is not None:
