@@ -40,6 +40,7 @@ import torch.multiprocessing as mp
 import absl
 from absl import app, flags
 from data.reco_dataset import get_reco_dataset
+from trainer.seeding import get_gin_configured_seed, seed_everything
 from trainer.train import Trainer
 from trainer.util import make_model
 try:
@@ -120,6 +121,12 @@ def main(argv) -> None:  # pyre-ignore [2]
     if gin_config_file is not None:
         logging.info(f"Rank {rank}: loading gin config from {gin_config_file}")
         gin.parse_config_file(gin_config_file)
+
+    # Seed before dataset/model construction. Trainer.setup() runs after the
+    # model is already initialized, so seeding only inside Trainer is too late
+    # to make parameter initialization reproducible.
+    random_seed = get_gin_configured_seed()
+    seed_everything(random_seed, rank=rank, log_prefix="main pre-model-init")
 
     dataset = get_reco_dataset(
         mode=mode,

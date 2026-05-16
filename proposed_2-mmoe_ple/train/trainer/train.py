@@ -17,7 +17,6 @@
 import logging
 import os
 import glob
-import random
 import json
 
 import time
@@ -44,6 +43,7 @@ from data.reco_dataset import RecoDataset
 from data.ads_datasets.collate import CollateFn
 from indexing.utils import get_top_k_module
 from trainer.data_loader import create_data_loader
+from trainer.seeding import seed_everything
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 try:
@@ -161,7 +161,7 @@ class Trainer:
 
     def setup(self) -> None:
         # Place your setup logic here (DDP, dataloaders, optimizer, etc.)
-        random.seed(self.random_seed)
+        seed_everything(self.random_seed, rank=self.rank, log_prefix="trainer setup")
         torch.backends.cuda.matmul.allow_tf32 = self.enable_tf32
         torch.backends.cudnn.allow_tf32 = self.enable_tf32
         logging.info(f"cuda.matmul.allow_tf32: {self.enable_tf32}")
