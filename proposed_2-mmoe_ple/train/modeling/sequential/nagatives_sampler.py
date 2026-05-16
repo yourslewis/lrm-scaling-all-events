@@ -239,11 +239,22 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
         self.shard_size: int = shard_size
         self.shard_counts: Dict[int, int] = shard_counts
         self.pools: Dict[int, Tuple[int, Tuple[torch.Tensor, torch.Tensor]]] = {}   # domain_id -> (current_shard_idx, (index_tensor, embedding_tensor))
-        # Build domain_pools_map based on available shard_counts
+        # Build domain-aware pools for every train/eval domain. Ads-like domains
+        # (0=Ads semantic, 3=Ads pure corpus) share pools when domain 3 exists;
+        # other domains sample from their own domain pool. Never silently skip an
+        # unmapped domain: forward() raises instead of returning uninitialized ids.
+        ads_pools = [(0, 0.5), (3, 0.5)] if 3 in shard_counts else [(0, 1.0)]
+        self.domain_pools_map: Dict[int, List[Tuple[int, float]]] = {}
+        if 0 in shard_counts:
+            self.domain_pools_map[0] = ads_pools
+        if 1 in shard_counts:
+            self.domain_pools_map[1] = [(1, 1.0)]
+        if 2 in shard_counts:
+            self.domain_pools_map[2] = [(2, 1.0)]
         if 3 in shard_counts:
-            self.domain_pools_map: Dict[int, List[int]] = { 0: [(0, 0.5), (3, 0.5)], 1: [(1, 1.0)], 2: [(2, 1.0)] }
-        else:
-            self.domain_pools_map: Dict[int, List[int]] = { 0: [(0, 1.0)], 1: [(1, 1.0)], 2: [(2, 1.0)] }
+            self.domain_pools_map[3] = ads_pools
+        if 4 in shard_counts:
+            self.domain_pools_map[4] = [(4, 1.0)]
 
     def debug_str(self) -> str:
         sampling_debug_str = (
@@ -297,21 +308,25 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
         N, K = positive_ids.size(0), num_to_sample
         domain_ids = positive_ids // self.domain_offset  # [N]
 
-        sampled_ids = torch.empty(N, K, dtype=positive_ids.dtype, device=device)
-        sampled_negative_embeddings = torch.empty(N, K, self._item_emb.output_dim, dtype=torch.float32, device=device)
+        sampled_ids = torch.zeros(N, K, dtype=positive_ids.dtype, device=device)
+        sampled_negative_embeddings = torch.zeros(N, K, self._item_emb.output_dim, dtype=torch.float32, device=device)
 
         for domain_id in torch.unique(domain_ids).tolist():
-            # explicitly check if mapping exists, if not, just skip
             if domain_id not in self.domain_pools_map:
-                continue
-            neg_pools = self.domain_pools_map[domain_id]
-            if not neg_pools:
-                continue
+                raise ValueError(
+                    f"No negative pool mapping for positive domain {domain_id}; "
+                    f"available mappings={sorted(self.domain_pools_map.keys())}"
+                )
+            pool_weight_pairs = self.domain_pools_map[domain_id]
+            if not pool_weight_pairs:
+                raise ValueError(f"Empty negative pool mapping for positive domain {domain_id}")
+            for pool_id, _ in pool_weight_pairs:
+                if pool_id not in self.pools:
+                    raise RuntimeError(
+                        f"Negative pool {pool_id} has not been initialized. "
+                        "Call rotate() before using RotateInDomainGlobalNegativesSampler."
+                    )
 
-            if isinstance(neg_pools[0], int):
-                pool_weight_pairs = [(pid, 1.0) for pid in neg_pools]
-            else:
-                pool_weight_pairs = [(pid, float(w)) for pid, w in neg_pools]
             weights = torch.tensor([w for _, w in pool_weight_pairs], dtype=torch.float)
             probs = weights / weights.sum()
             # counts[k] = index of which pool each negative comes from, will group indices later
@@ -325,14 +340,18 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
                     continue
 
                 _, (item_ids, raw_embeddings) = self.pools[pool_id]
-                neg_ids = torch.randint(
-                    low=item_ids.min(),
-                    high=item_ids.max() + 1,
+                sampled_offsets = torch.randint(
+                    low=0,
+                    high=item_ids.numel(),
                     size=(k_i,),
-                    dtype=positive_ids.dtype,
+                    dtype=torch.long,
                 )
+                neg_ids = item_ids[sampled_offsets].to(dtype=positive_ids.dtype)
+                raw_offsets = torch.clamp(neg_ids % self.shard_size, max=raw_embeddings.shape[0] - 1).long()
                 encoded_neg_ids = pool_id * self.domain_offset + neg_ids
-                neg_embs = self.normalize_embeddings(self._item_emb(raw_embeddings[torch.clamp(neg_ids, max=raw_embeddings.shape[0]-1)].to(dtype=torch.float32, device=device)))  # [K, D]
+                neg_embs = self.normalize_embeddings(
+                    self._item_emb(raw_embeddings[raw_offsets].to(dtype=torch.float32, device=device))
+                )  # [K, D]
 
                 encoded_neg_ids_list.append(encoded_neg_ids.to(device))
                 neg_embs_list.append(neg_embs)
