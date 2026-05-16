@@ -146,6 +146,14 @@ class SampledSoftmaxLoss(AutoregressiveLoss):
             .squeeze(1)
             .long()
         )
+        if "supervision_type_ids" in kwargs and kwargs["supervision_type_ids"] is not None:
+            kwargs["supervision_type_ids"] = (
+                torch.ops.fbgemm.dense_to_jagged(
+                    kwargs["supervision_type_ids"].unsqueeze(-1).float(), [jagged_id_offsets]
+                )[0]
+                .squeeze(1)
+                .long()
+            )
         # jagged_seq_ids
         kwargs["jagged_seq_ids"] = torch.repeat_interleave(torch.arange(len(lengths), device=lengths.device), lengths)
         if "user_ids" in kwargs:

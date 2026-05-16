@@ -239,22 +239,43 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
         self.shard_size: int = shard_size
         self.shard_counts: Dict[int, int] = shard_counts
         self.pools: Dict[int, Tuple[int, Tuple[torch.Tensor, torch.Tensor]]] = {}   # domain_id -> (current_shard_idx, (index_tensor, embedding_tensor))
-        # Build domain-aware pools for every train/eval domain. Ads-like domains
-        # (0=Ads semantic, 3=Ads pure corpus) share pools when domain 3 exists;
-        # other domains sample from their own domain pool. Never silently skip an
-        # unmapped domain: forward() raises instead of returning uninitialized ids.
-        ads_pools = [(0, 0.5), (3, 0.5)] if 3 in shard_counts else [(0, 1.0)]
-        self.domain_pools_map: Dict[int, List[Tuple[int, float]]] = {}
-        if 0 in shard_counts:
-            self.domain_pools_map[0] = ads_pools
-        if 1 in shard_counts:
-            self.domain_pools_map[1] = [(1, 1.0)]
-        if 2 in shard_counts:
-            self.domain_pools_map[2] = [(2, 1.0)]
+        # Historical eval behavior: get_eval_state_v2 calls this sampler with a
+        # fake positive id from domain 0 and no event-type labels. Keep this map
+        # unchanged so validation metrics remain comparable with prior runs.
         if 3 in shard_counts:
-            self.domain_pools_map[3] = ads_pools
-        if 4 in shard_counts:
-            self.domain_pools_map[4] = [(4, 1.0)]
+            self.domain_pools_map: Dict[int, List[Tuple[int, float]]] = {
+                0: [(0, 0.5), (3, 0.5)],
+                1: [(1, 1.0)],
+                2: [(2, 1.0)],
+            }
+        else:
+            self.domain_pools_map: Dict[int, List[Tuple[int, float]]] = {
+                0: [(0, 1.0)],
+                1: [(1, 1.0)],
+                2: [(2, 1.0)],
+            }
+
+        # Train-time event-type-aware routing for current all_events_v2 domains.
+        # This is used only when SampledSoftmaxLoss passes supervision_type_ids.
+        self.event_type_to_domain: Dict[int, int] = {
+            1: 0,   # NativeClick -> Ads
+            2: 0,   # SearchClick -> Ads
+            3: 1,   # EdgePageTitle -> Browsing/Web
+            4: 2,   # EdgeSearchQuery -> SearchQuery
+            5: 2,   # OrganicSearchQuery -> SearchQuery
+            6: 1,   # UET -> Browsing/Web
+            7: 4,   # OutlookSenderDomain -> OutlookSender
+            8: 3,   # UETShoppingCart -> PurchaseCart
+            9: 1,   # UETShoppingView -> Browsing/Web
+            10: 3,  # AbandonCart -> PurchaseCart
+            11: 3,  # EdgeShoppingCart -> PurchaseCart
+            12: 3,  # EdgeShoppingPurchase -> PurchaseCart
+            13: 1,  # ChromePageTitle -> Browsing/Web
+            14: 1,  # MSN -> Browsing/Web
+        }
+        self.train_domain_pools_map: Dict[int, List[Tuple[int, float]]] = {
+            domain_id: [(domain_id, 1.0)] for domain_id in shard_counts.keys()
+        }
 
     def debug_str(self) -> str:
         sampling_debug_str = (
@@ -306,20 +327,44 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         device = positive_ids.device
         N, K = positive_ids.size(0), num_to_sample
-        domain_ids = positive_ids // self.domain_offset  # [N]
+        supervision_type_ids = kwargs.get("supervision_type_ids")
+        if supervision_type_ids is not None:
+            if supervision_type_ids.size() != positive_ids.size():
+                raise ValueError(
+                    f"supervision_type_ids shape {tuple(supervision_type_ids.shape)} "
+                    f"must match positive_ids shape {tuple(positive_ids.shape)}"
+                )
+            mapped = torch.full_like(positive_ids, -1)
+            for event_type_id, domain_id in self.event_type_to_domain.items():
+                mapped = torch.where(
+                    supervision_type_ids == event_type_id,
+                    torch.full_like(mapped, domain_id),
+                    mapped,
+                )
+            unknown = mapped < 0
+            if torch.any(unknown):
+                bad = torch.unique(supervision_type_ids[unknown]).detach().cpu().tolist()
+                raise ValueError(f"Unmapped supervision event type ids for negative sampling: {bad}")
+            domain_ids = mapped
+            pools_map = self.train_domain_pools_map
+        else:
+            # Eval/default path: preserve historical positive-id-domain routing.
+            domain_ids = positive_ids // self.domain_offset  # [N]
+            pools_map = self.domain_pools_map
 
         sampled_ids = torch.zeros(N, K, dtype=positive_ids.dtype, device=device)
         sampled_negative_embeddings = torch.zeros(N, K, self._item_emb.output_dim, dtype=torch.float32, device=device)
 
         for domain_id in torch.unique(domain_ids).tolist():
-            if domain_id not in self.domain_pools_map:
+            if domain_id not in pools_map:
                 raise ValueError(
-                    f"No negative pool mapping for positive domain {domain_id}; "
-                    f"available mappings={sorted(self.domain_pools_map.keys())}"
+                    f"No negative pool mapping for domain {domain_id}; "
+                    f"available mappings={sorted(pools_map.keys())}; "
+                    f"supervision_type_ids provided={supervision_type_ids is not None}"
                 )
-            pool_weight_pairs = self.domain_pools_map[domain_id]
+            pool_weight_pairs = pools_map[domain_id]
             if not pool_weight_pairs:
-                raise ValueError(f"Empty negative pool mapping for positive domain {domain_id}")
+                raise ValueError(f"Empty negative pool mapping for domain {domain_id}")
             for pool_id, _ in pool_weight_pairs:
                 if pool_id not in self.pools:
                     raise RuntimeError(
