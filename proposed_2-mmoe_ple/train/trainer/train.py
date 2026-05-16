@@ -17,7 +17,6 @@
 import logging
 import os
 import glob
-import random
 import json
 
 import time
@@ -44,6 +43,7 @@ from data.reco_dataset import RecoDataset
 from data.ads_datasets.collate import CollateFn
 from indexing.utils import get_top_k_module
 from trainer.data_loader import create_data_loader
+from trainer.seeding import seed_everything
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 try:
@@ -161,7 +161,7 @@ class Trainer:
 
     def setup(self) -> None:
         # Place your setup logic here (DDP, dataloaders, optimizer, etc.)
-        random.seed(self.random_seed)
+        seed_everything(self.random_seed, rank=self.rank, log_prefix="trainer setup")
         torch.backends.cuda.matmul.allow_tf32 = self.enable_tf32
         torch.backends.cudnn.allow_tf32 = self.enable_tf32
         logging.info(f"cuda.matmul.allow_tf32: {self.enable_tf32}")
@@ -225,6 +225,14 @@ class Trainer:
         # For single-GPU, skip DDP wrapper entirely
         self._use_ddp = (self.world_size > 1)
         self._model_unwrapped = self.model.module if self._use_ddp else self.model
+
+        # Global/domain-aware training samplers need their shard pool initialized
+        # before the first optimizer step. InBatch samplers do not implement
+        # rotate(), so this is a no-op for baseline configs.
+        train_sampler = getattr(self._model_unwrapped, "negatives_sampler", {}).get("train")
+        if hasattr(train_sampler, "rotate") and not getattr(train_sampler, "pools", None):
+            logging.info("initializing train negatives sampler via rotate()")
+            train_sampler.rotate()
 
         date_str = date.today().strftime("%Y-%m-%d")
         model_subfolder = f"{self.dataset.dataset_name}-l{self.dataset.max_sequence_length}"
