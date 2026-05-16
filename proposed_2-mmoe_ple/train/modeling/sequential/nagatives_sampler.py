@@ -347,6 +347,13 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
                     torch.full_like(mapped, domain_id),
                     mapped,
                 )
+            # Padding/UNK type id 0 can appear in dense eval/training tensors even
+            # when its supervision weight is zero; route it by encoded id domain.
+            mapped = torch.where(
+                supervision_type_ids == 0,
+                positive_ids // self.domain_offset,
+                mapped,
+            )
             unknown = mapped < 0
             if torch.any(unknown):
                 bad = torch.unique(supervision_type_ids[unknown]).detach().cpu().tolist()
