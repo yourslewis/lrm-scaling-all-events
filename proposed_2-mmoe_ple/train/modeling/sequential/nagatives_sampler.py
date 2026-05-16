@@ -239,20 +239,26 @@ class RotateInDomainGlobalNegativesSampler(NegativesSampler):
         self.shard_size: int = shard_size
         self.shard_counts: Dict[int, int] = shard_counts
         self.pools: Dict[int, Tuple[int, Tuple[torch.Tensor, torch.Tensor]]] = {}   # domain_id -> (current_shard_idx, (index_tensor, embedding_tensor))
-        # Historical eval behavior: get_eval_state_v2 calls this sampler with a
-        # fake positive id from domain 0 and no event-type labels. Keep this map
-        # unchanged so validation metrics remain comparable with prior runs.
+        # Historical get_eval_state_v2 behavior: it calls this sampler with a
+        # fake positive id from domain 0 and no event-type labels, so keep domain
+        # 0 sampling as the same 0/3 mixture when domain 3 exists. Other encoded
+        # domains route to themselves so eval loss/perplexity can handle all 5
+        # all_events_v2 domains without changing top-k eval candidate sampling.
         if 3 in shard_counts:
             self.domain_pools_map: Dict[int, List[Tuple[int, float]]] = {
                 0: [(0, 0.5), (3, 0.5)],
                 1: [(1, 1.0)],
                 2: [(2, 1.0)],
+                3: [(3, 1.0)],
+                4: [(4, 1.0)],
             }
         else:
             self.domain_pools_map: Dict[int, List[Tuple[int, float]]] = {
                 0: [(0, 1.0)],
                 1: [(1, 1.0)],
                 2: [(2, 1.0)],
+                3: [(3, 1.0)],
+                4: [(4, 1.0)],
             }
 
         # Train-time event-type-aware routing for current all_events_v2 domains.
