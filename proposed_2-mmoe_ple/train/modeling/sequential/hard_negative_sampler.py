@@ -1,4 +1,4 @@
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import gc
 import logging
@@ -54,6 +54,8 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         hard_candidate_pool_size: int = 1024,
         hard_rank_start: int = 32,
         hard_rank_end: int = 512,
+        filter_batch_positives: bool = False,
+        filter_resample_attempts: int = 3,
     ) -> None:
         super().__init__(l2_norm=l2_norm, l2_norm_eps=l2_norm_eps)
         if not 0.0 <= hard_fraction <= 1.0:
@@ -71,13 +73,17 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         self.hard_candidate_pool_size: int = hard_candidate_pool_size
         self.hard_rank_start: int = hard_rank_start
         self.hard_rank_end: int = hard_rank_end
+        self.filter_batch_positives: bool = filter_batch_positives
+        self.filter_resample_attempts: int = filter_resample_attempts
         self.pools: Dict[int, Tuple[int, Tuple[torch.Tensor, torch.Tensor]]] = {}
+        self._batch_positive_ids: Optional[torch.Tensor] = None
 
     def debug_str(self) -> str:
         return (
             f"mixed-hard-global-hf{self.hard_fraction:g}"
             f"-c{self.hard_candidate_pool_size}"
             f"-r{self.hard_rank_start}-{self.hard_rank_end}"
+            f"{'-filter-batch-pos' if self.filter_batch_positives else ''}"
             f"{f'-l2-eps{self._l2_norm_eps}' if self._l2_norm else ''}"
         )
 
@@ -107,7 +113,19 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         presences: torch.Tensor,
         embeddings: torch.Tensor,
     ) -> None:
-        pass
+        # Optional denoising filter: cache all valid supervision ids in each
+        # sequence row so sampled negatives can exclude other positives from
+        # the same user/session window, not just the exact current target.
+        # This is intentionally lightweight and batch-local; eval remains
+        # unchanged through the separate rotate sampler.
+        if not self.filter_batch_positives:
+            self._batch_positive_ids = None
+            return
+        self._batch_positive_ids = torch.where(
+            presences & (ids != 0),
+            ids,
+            torch.zeros_like(ids),
+        ).detach()
 
     def _domains_from_event_types(
         self,
@@ -172,6 +190,7 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         num_to_sample: int,
         device: torch.device,
         dtype: torch.dtype,
+        row_positive_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         if num_to_sample == 0:
             return (
@@ -179,7 +198,11 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
                 torch.empty(num_rows, 0, self._item_emb.output_dim, dtype=torch.float32, device=device),
             )
         ids, embs = self._sample_from_pool(pool_id, num_rows * num_to_sample, device, dtype)
-        return ids.view(num_rows, num_to_sample), embs.view(num_rows, num_to_sample, -1)
+        ids = ids.view(num_rows, num_to_sample)
+        embs = embs.view(num_rows, num_to_sample, -1)
+        if row_positive_ids is not None:
+            ids, embs = self._resample_conflicts(pool_id, ids, embs, row_positive_ids, device, dtype)
+        return ids, embs
 
     def _sample_hard(
         self,
@@ -187,6 +210,7 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         query_embeddings: torch.Tensor,
         positive_ids: torch.Tensor,
         num_to_sample: int,
+        row_positive_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         num_rows = query_embeddings.size(0)
         device = query_embeddings.device
@@ -209,6 +233,15 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
             torch.full_like(scores, -torch.inf),
             scores,
         )
+        if row_positive_ids is not None:
+            row_positive_ids = row_positive_ids.to(device=device, dtype=dtype)
+            conflict = torch.zeros_like(scores, dtype=torch.bool)
+            for col in range(row_positive_ids.size(1)):
+                pos = row_positive_ids[:, col]
+                valid = pos != 0
+                if torch.any(valid):
+                    conflict |= valid.unsqueeze(1) & (candidate_ids.unsqueeze(0) == pos.unsqueeze(1))
+            scores = torch.where(conflict, torch.full_like(scores, -torch.inf), scores)
         sorted_idx = torch.argsort(scores, dim=1, descending=True)
         rank_start = min(self.hard_rank_start, max(0, sorted_idx.size(1) - 1))
         rank_end = min(self.hard_rank_end, sorted_idx.size(1))
@@ -225,6 +258,44 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         )
         selected = torch.gather(window, dim=1, index=choices)
         return candidate_ids[selected], candidate_embs[selected]
+
+    def _resample_conflicts(
+        self,
+        pool_id: int,
+        ids: torch.Tensor,
+        embs: torch.Tensor,
+        row_positive_ids: torch.Tensor,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        row_positive_ids = row_positive_ids.to(device=device, dtype=dtype)
+        for _ in range(max(0, self.filter_resample_attempts)):
+            conflict = torch.zeros(ids.shape, dtype=torch.bool, device=device)
+            for col in range(row_positive_ids.size(1)):
+                pos = row_positive_ids[:, col]
+                valid = pos != 0
+                if torch.any(valid):
+                    conflict |= valid.unsqueeze(1) & (ids == pos.unsqueeze(1))
+            if not torch.any(conflict):
+                break
+            n = int(conflict.sum().item())
+            new_ids, new_embs = self._sample_from_pool(pool_id, n, device, dtype)
+            ids = ids.clone()
+            embs = embs.clone()
+            ids[conflict] = new_ids
+            embs[conflict] = new_embs
+        return ids, embs
+
+    def _row_positive_ids_for(
+        self,
+        jagged_seq_ids: Optional[torch.Tensor],
+        indices: torch.Tensor,
+        device: torch.device,
+    ) -> Optional[torch.Tensor]:
+        if not self.filter_batch_positives or self._batch_positive_ids is None or jagged_seq_ids is None:
+            return None
+        seq_ids = jagged_seq_ids[indices].to(device=self._batch_positive_ids.device).long()
+        return self._batch_positive_ids[seq_ids].to(device=device)
 
     def forward(
         self,
@@ -247,6 +318,7 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
 
         device = positive_ids.device
         N, K = positive_ids.size(0), num_to_sample
+        jagged_seq_ids = kwargs.get("jagged_seq_ids")
         hard_k = int(round(K * self.hard_fraction))
         hard_k = max(0, min(K, hard_k))
         uniform_k = K - hard_k
@@ -263,18 +335,21 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
             if indices.numel() == 0:
                 continue
 
+            row_positive_ids = self._row_positive_ids_for(jagged_seq_ids, indices, device)
             uniform_ids, uniform_embs = self._sample_uniform(
                 domain_id,
                 indices.numel(),
                 uniform_k,
                 device,
                 positive_ids.dtype,
+                row_positive_ids=row_positive_ids,
             )
             hard_ids, hard_embs = self._sample_hard(
                 domain_id,
                 query_embeddings[indices],
                 positive_ids[indices],
                 hard_k,
+                row_positive_ids=row_positive_ids,
             )
             sampled_ids_chunks.append((indices, torch.cat([uniform_ids, hard_ids], dim=1)))
             sampled_emb_chunks.append((indices, torch.cat([uniform_embs, hard_embs], dim=1)))
