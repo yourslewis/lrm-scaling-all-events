@@ -126,6 +126,8 @@ def make_model(
     hard_negative_candidate_pool_size: int = 1024,
     hard_negative_rank_start: int = 32,
     hard_negative_rank_end: int = 512,
+    hard_negative_filter_batch_positives: bool = False,
+    hard_negative_filter_resample_attempts: int = 3,
     supervision_domain_weights: Optional[Dict[int, float]] = None,
     supervision_train_domains: Optional[List[int]] = None,
     supervision_target_position: str = "all",
@@ -210,6 +212,8 @@ def make_model(
         hard_negative_candidate_pool_size=hard_negative_candidate_pool_size,
         hard_negative_rank_start=hard_negative_rank_start,
         hard_negative_rank_end=hard_negative_rank_end,
+        hard_negative_filter_batch_positives=hard_negative_filter_batch_positives,
+        hard_negative_filter_resample_attempts=hard_negative_filter_resample_attempts,
         supervision_domain_weights=supervision_domain_weights,
         supervision_train_domains=supervision_train_domains,
         supervision_target_position=supervision_target_position,
@@ -300,6 +304,8 @@ class SequentialRetrieval(torch.nn.Module):
             hard_negative_candidate_pool_size: int = 1024,
             hard_negative_rank_start: int = 32,
             hard_negative_rank_end: int = 512,
+            hard_negative_filter_batch_positives: bool = False,
+            hard_negative_filter_resample_attempts: int = 3,
             supervision_domain_weights: Optional[Dict[int, float]] = None,
             supervision_train_domains: Optional[List[int]] = None,
             supervision_target_position: str = "all",
@@ -396,6 +402,8 @@ class SequentialRetrieval(torch.nn.Module):
         self.hard_negative_candidate_pool_size = hard_negative_candidate_pool_size
         self.hard_negative_rank_start = hard_negative_rank_start
         self.hard_negative_rank_end = hard_negative_rank_end
+        self.hard_negative_filter_batch_positives = hard_negative_filter_batch_positives
+        self.hard_negative_filter_resample_attempts = hard_negative_filter_resample_attempts
 
         self.multi_task_module_type = multi_task_module_type
         self.num_experts = num_experts
@@ -812,6 +820,8 @@ class SequentialRetrieval(torch.nn.Module):
                 hard_candidate_pool_size=self.hard_negative_candidate_pool_size,
                 hard_rank_start=self.hard_negative_rank_start,
                 hard_rank_end=self.hard_negative_rank_end,
+                filter_batch_positives=self.hard_negative_filter_batch_positives,
+                filter_resample_attempts=self.hard_negative_filter_resample_attempts,
             )
             rotate_negatives_sampler = RotateInDomainGlobalNegativesSampler(
                 item_emb=model._embedding_module,
