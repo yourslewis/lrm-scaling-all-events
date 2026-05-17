@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(os.environ.get("LRM_ROOT", "/home/yourslewis/lrm-scaling-all-events"))
+ROOT = Path(os.environ.get("LRM_ROOT", Path(__file__).resolve().parents[1]))
 TRAIN = ROOT / "proposed_2-mmoe_ple/train"
 DATA = Path(os.environ.get("LRM_DATA", "/home/yourslewis/lrm_benchmarkv4/processed/all_events_v2"))
 EMB = Path(os.environ.get("LRM_EMB", "/home/yourslewis/lrm_benchmarkv4/processed/semantic_embeddings"))
