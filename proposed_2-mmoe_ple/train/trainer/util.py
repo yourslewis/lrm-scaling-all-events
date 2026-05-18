@@ -54,7 +54,10 @@ from modeling.sequential.nagatives_sampler import (
     RotateInDomainGlobalNegativesSampler,
     HybridNegativesSampler,
 )
-from modeling.sequential.hard_negative_sampler import MixedHardGlobalNegativesSampler
+from modeling.sequential.hard_negative_sampler import (
+    HybridDomainInBatchHardGlobalNegativesSampler,
+    MixedHardGlobalNegativesSampler,
+)
 
 from modeling.sequential.embedding_modules import (
     EmbeddingModule,
@@ -128,6 +131,8 @@ def make_model(
     hard_negative_rank_end: int = 512,
     hard_negative_filter_batch_positives: bool = False,
     hard_negative_filter_resample_attempts: int = 3,
+    hybrid_in_batch_fraction: float = 0.50,
+    hybrid_global_hard_fraction: float = 0.30,
     supervision_domain_weights: Optional[Dict[int, float]] = None,
     supervision_train_domains: Optional[List[int]] = None,
     supervision_target_position: str = "all",
@@ -214,6 +219,8 @@ def make_model(
         hard_negative_rank_end=hard_negative_rank_end,
         hard_negative_filter_batch_positives=hard_negative_filter_batch_positives,
         hard_negative_filter_resample_attempts=hard_negative_filter_resample_attempts,
+        hybrid_in_batch_fraction=hybrid_in_batch_fraction,
+        hybrid_global_hard_fraction=hybrid_global_hard_fraction,
         supervision_domain_weights=supervision_domain_weights,
         supervision_train_domains=supervision_train_domains,
         supervision_target_position=supervision_target_position,
@@ -306,6 +313,8 @@ class SequentialRetrieval(torch.nn.Module):
             hard_negative_rank_end: int = 512,
             hard_negative_filter_batch_positives: bool = False,
             hard_negative_filter_resample_attempts: int = 3,
+            hybrid_in_batch_fraction: float = 0.50,
+            hybrid_global_hard_fraction: float = 0.30,
             supervision_domain_weights: Optional[Dict[int, float]] = None,
             supervision_train_domains: Optional[List[int]] = None,
             supervision_target_position: str = "all",
@@ -404,6 +413,8 @@ class SequentialRetrieval(torch.nn.Module):
         self.hard_negative_rank_end = hard_negative_rank_end
         self.hard_negative_filter_batch_positives = hard_negative_filter_batch_positives
         self.hard_negative_filter_resample_attempts = hard_negative_filter_resample_attempts
+        self.hybrid_in_batch_fraction = hybrid_in_batch_fraction
+        self.hybrid_global_hard_fraction = hybrid_global_hard_fraction
 
         self.multi_task_module_type = multi_task_module_type
         self.num_experts = num_experts
@@ -833,6 +844,30 @@ class SequentialRetrieval(torch.nn.Module):
             )
             negatives_sampler = {"train": hard_negatives_sampler, "eval": rotate_negatives_sampler}
             sampling_debug_str = hard_negatives_sampler.debug_str()
+        elif self.sampling_strategy == "HybridDomainInBatchHardGlobalNegativesSampler":
+            hybrid_sampler = HybridDomainInBatchHardGlobalNegativesSampler(
+                item_emb=model._embedding_module,
+                domain_offset=self.domain_offset,
+                shard_size=self.shard_size,
+                shard_counts=self.shard_counts,
+                l2_norm=self.item_l2_norm,
+                l2_norm_eps=self.l2_norm_eps,
+                in_batch_fraction=self.hybrid_in_batch_fraction,
+                global_hard_fraction=self.hybrid_global_hard_fraction,
+                hard_candidate_pool_size=self.hard_negative_candidate_pool_size,
+                hard_rank_start=self.hard_negative_rank_start,
+                hard_rank_end=self.hard_negative_rank_end,
+            )
+            rotate_negatives_sampler = RotateInDomainGlobalNegativesSampler(
+                item_emb=model._embedding_module,
+                domain_offset=self.domain_offset,
+                shard_size=self.shard_size,
+                shard_counts=self.shard_counts,
+                l2_norm=self.item_l2_norm,
+                l2_norm_eps=self.l2_norm_eps,
+            )
+            negatives_sampler = {"train": hybrid_sampler, "eval": rotate_negatives_sampler}
+            sampling_debug_str = hybrid_sampler.debug_str()
         elif self.sampling_strategy == "Hybrid":
             in_batch_negatives_sampler = InBatchNegativesSampler(
                 l2_norm=self.item_l2_norm,                      # set to be True
