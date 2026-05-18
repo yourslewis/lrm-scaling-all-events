@@ -361,3 +361,202 @@ class MixedHardGlobalNegativesSampler(NegativesSampler):
         for indices, embs in sampled_emb_chunks:
             sampled_negative_embeddings[indices] = embs
         return sampled_ids, sampled_negative_embeddings
+
+
+@register("sampler", "HybridDomainInBatchHardGlobalNegativesSampler")
+class HybridDomainInBatchHardGlobalNegativesSampler(MixedHardGlobalNegativesSampler):
+    """Hybrid sampler: domain-aware in-batch + global hard + global random.
+
+    For each positive, splits K negatives into:
+      1. domain-aware in-batch random negatives;
+      2. event-type/domain-aware global hard negatives;
+      3. event-type/domain-aware global random negatives.
+
+    If the in-batch same-domain pool cannot provide enough unique candidates for
+    a row, the missing slots are filled from the global hard-negative pool.
+    """
+
+    def __init__(
+        self,
+        item_emb: EmbeddingModule,
+        domain_offset: int,
+        shard_size: int,
+        shard_counts: Dict[int, int],
+        l2_norm: bool,
+        l2_norm_eps: float,
+        in_batch_fraction: float = 0.50,
+        global_hard_fraction: float = 0.30,
+        hard_candidate_pool_size: int = 1024,
+        hard_rank_start: int = 32,
+        hard_rank_end: int = 512,
+    ) -> None:
+        if in_batch_fraction < 0 or global_hard_fraction < 0 or in_batch_fraction + global_hard_fraction > 1:
+            raise ValueError(
+                "in_batch_fraction and global_hard_fraction must be non-negative "
+                "and sum to <= 1"
+            )
+        super().__init__(
+            item_emb=item_emb,
+            domain_offset=domain_offset,
+            shard_size=shard_size,
+            shard_counts=shard_counts,
+            l2_norm=l2_norm,
+            l2_norm_eps=l2_norm_eps,
+            hard_fraction=global_hard_fraction,
+            hard_candidate_pool_size=hard_candidate_pool_size,
+            hard_rank_start=hard_rank_start,
+            hard_rank_end=hard_rank_end,
+            filter_batch_positives=True,
+        )
+        self.in_batch_fraction = in_batch_fraction
+        self.global_hard_fraction = global_hard_fraction
+        self._cached_ids: Optional[torch.Tensor] = None
+        self._cached_embeddings: Optional[torch.Tensor] = None
+        self._cached_seq_ids: Optional[torch.Tensor] = None
+        self._cached_domain_ids: Optional[torch.Tensor] = None
+
+    def debug_str(self) -> str:
+        return (
+            f"hybrid-domain-inbatch{self.in_batch_fraction:g}"
+            f"-hard{self.global_hard_fraction:g}"
+            f"-globalrand{max(0.0, 1.0 - self.in_batch_fraction - self.global_hard_fraction):g}"
+            f"-c{self.hard_candidate_pool_size}"
+            f"-r{self.hard_rank_start}-{self.hard_rank_end}"
+            f"{f'-l2-eps{self._l2_norm_eps}' if self._l2_norm else ''}"
+        )
+
+    def process_batch(
+        self,
+        ids: torch.Tensor,
+        presences: torch.Tensor,
+        embeddings: torch.Tensor,
+    ) -> None:
+        super().process_batch(ids, presences, embeddings)
+        valid = presences & (ids != 0)
+        self._cached_ids = ids[valid]
+        self._cached_embeddings = self.normalize_embeddings(embeddings[valid])
+        self._cached_seq_ids = torch.arange(ids.size(0), device=ids.device).unsqueeze(1).expand_as(ids)[valid]
+        self._cached_domain_ids = self._cached_ids // self.domain_offset
+
+    def _sample_in_batch(
+        self,
+        domain_id: int,
+        seq_ids: torch.Tensor,
+        positive_ids: torch.Tensor,
+        num_to_sample: int,
+        row_positive_ids: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        device = positive_ids.device
+        dtype = positive_ids.dtype
+        num_rows = positive_ids.size(0)
+        ids = torch.zeros(num_rows, num_to_sample, dtype=dtype, device=device)
+        embs = torch.zeros(num_rows, num_to_sample, self._item_emb.output_dim, dtype=torch.float32, device=device)
+        valid_out = torch.zeros(num_rows, num_to_sample, dtype=torch.bool, device=device)
+        if num_to_sample == 0 or self._cached_ids is None or self._cached_ids.numel() == 0:
+            return ids, embs, valid_out
+
+        cached_ids = self._cached_ids.to(device=device, dtype=dtype)
+        cached_embs = self._cached_embeddings.to(device=device)
+        cached_seq_ids = self._cached_seq_ids.to(device=device)
+        cached_domains = self._cached_domain_ids.to(device=device)
+        row_positive_ids = row_positive_ids.to(device=device, dtype=dtype) if row_positive_ids is not None else None
+
+        for row in range(num_rows):
+            mask = (cached_domains == domain_id) & (cached_seq_ids != seq_ids[row]) & (cached_ids != positive_ids[row])
+            if row_positive_ids is not None:
+                row_pos = row_positive_ids[row]
+                for col in range(row_pos.numel()):
+                    pos = row_pos[col]
+                    if pos != 0:
+                        mask &= cached_ids != pos
+            offsets = torch.nonzero(mask, as_tuple=True)[0]
+            if offsets.numel() == 0:
+                continue
+            take = min(num_to_sample, int(offsets.numel()))
+            perm = torch.randperm(offsets.numel(), device=device)[:take]
+            selected = offsets[perm]
+            ids[row, :take] = cached_ids[selected]
+            embs[row, :take] = cached_embs[selected]
+            valid_out[row, :take] = True
+        return ids, embs, valid_out
+
+    def forward(
+        self,
+        positive_ids: torch.Tensor,
+        num_to_sample: int,
+        **kwargs,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if num_to_sample <= 0:
+            raise ValueError("num_to_sample must be > 0")
+        query_embeddings = kwargs.get("query_embeddings")
+        if query_embeddings is None:
+            raise ValueError("HybridDomainInBatchHardGlobalNegativesSampler requires query_embeddings")
+        supervision_type_ids = kwargs.get("supervision_type_ids")
+        if supervision_type_ids is None:
+            domain_ids = positive_ids // self.domain_offset
+        else:
+            domain_ids = self._domains_from_event_types(positive_ids, supervision_type_ids)
+
+        device = positive_ids.device
+        N, K = positive_ids.size(0), num_to_sample
+        in_batch_k = int(round(K * self.in_batch_fraction))
+        hard_k = int(round(K * self.global_hard_fraction))
+        in_batch_k = max(0, min(K, in_batch_k))
+        hard_k = max(0, min(K - in_batch_k, hard_k))
+        random_k = K - in_batch_k - hard_k
+        jagged_seq_ids = kwargs.get("jagged_seq_ids")
+        if jagged_seq_ids is None:
+            raise ValueError("HybridDomainInBatchHardGlobalNegativesSampler requires jagged_seq_ids")
+
+        sampled_ids = torch.zeros(N, K, dtype=positive_ids.dtype, device=device)
+        sampled_negative_embeddings = torch.zeros(N, K, self._item_emb.output_dim, dtype=torch.float32, device=device)
+
+        for domain_id in torch.unique(domain_ids).tolist():
+            if domain_id not in self.shard_counts:
+                raise ValueError(
+                    f"No negative pool for domain {domain_id}; "
+                    f"available domains={sorted(self.shard_counts.keys())}"
+                )
+            indices = (domain_ids == domain_id).nonzero(as_tuple=True)[0]
+            if indices.numel() == 0:
+                continue
+
+            row_positive_ids = self._row_positive_ids_for(jagged_seq_ids, indices, device)
+            seq_ids = jagged_seq_ids[indices]
+            in_ids, in_embs, in_valid = self._sample_in_batch(
+                domain_id=domain_id,
+                seq_ids=seq_ids,
+                positive_ids=positive_ids[indices],
+                num_to_sample=in_batch_k,
+                row_positive_ids=row_positive_ids,
+            )
+            # Draw enough hard negatives to fill the normal hard quota plus any
+            # unfilled in-batch slots. Unused fallback hard samples are ignored.
+            hard_ids_all, hard_embs_all = self._sample_hard(
+                domain_id,
+                query_embeddings[indices],
+                positive_ids[indices],
+                hard_k + in_batch_k,
+                row_positive_ids=row_positive_ids,
+            )
+            rand_ids, rand_embs = self._sample_uniform(
+                domain_id,
+                indices.numel(),
+                random_k,
+                device,
+                positive_ids.dtype,
+                row_positive_ids=row_positive_ids,
+            )
+
+            hard_fallback_ids = hard_ids_all[:, :in_batch_k]
+            hard_fallback_embs = hard_embs_all[:, :in_batch_k]
+            hard_ids = hard_ids_all[:, in_batch_k:in_batch_k + hard_k]
+            hard_embs = hard_embs_all[:, in_batch_k:in_batch_k + hard_k]
+            mixed_in_ids = torch.where(in_valid, in_ids, hard_fallback_ids)
+            mixed_in_embs = torch.where(in_valid.unsqueeze(2), in_embs, hard_fallback_embs)
+            row_ids = torch.cat([mixed_in_ids, hard_ids, rand_ids], dim=1)
+            row_embs = torch.cat([mixed_in_embs, hard_embs, rand_embs], dim=1)
+            sampled_ids[indices] = row_ids
+            sampled_negative_embeddings[indices] = row_embs
+
+        return sampled_ids, sampled_negative_embeddings
