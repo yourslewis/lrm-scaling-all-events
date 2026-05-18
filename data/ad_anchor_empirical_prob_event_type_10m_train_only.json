@@ -1,0 +1,68 @@
+{
+  "window_seconds": 600,
+  "split": "train",
+  "event_type_prob": {
+    "AbandonCart": {
+      "count": 631988,
+      "near_ad_count": 132822,
+      "p_near_ad": 0.21016538288701683
+    },
+    "ChromePageTitle": {
+      "count": 213866,
+      "near_ad_count": 2922,
+      "p_near_ad": 0.013662760794142127
+    },
+    "EdgePageTitle": {
+      "count": 66861603,
+      "near_ad_count": 3804884,
+      "p_near_ad": 0.056906861775360064
+    },
+    "EdgeSearchQuery": {
+      "count": 5247737,
+      "near_ad_count": 522942,
+      "p_near_ad": 0.09965095430658968
+    },
+    "EdgeShoppingCart": {
+      "count": 673822,
+      "near_ad_count": 73377,
+      "p_near_ad": 0.1088967115944567
+    },
+    "EdgeShoppingPurchase": {
+      "count": 45269,
+      "near_ad_count": 6260,
+      "p_near_ad": 0.13828447723607767
+    },
+    "MSN": {
+      "count": 18408717,
+      "near_ad_count": 1712131,
+      "p_near_ad": 0.09300653597966659
+    },
+    "OrganicSearchQuery": {
+      "count": 7287359,
+      "near_ad_count": 1152404,
+      "p_near_ad": 0.15813739929650783
+    },
+    "OutlookSenderDomain": {
+      "count": 2243164,
+      "near_ad_count": 100857,
+      "p_near_ad": 0.04496193769158207
+    },
+    "UET": {
+      "count": 17794325,
+      "near_ad_count": 1590475,
+      "p_near_ad": 0.08938102456822611
+    },
+    "UETShoppingCart": {
+      "count": 66917,
+      "near_ad_count": 6171,
+      "p_near_ad": 0.0922187187112393
+    },
+    "UETShoppingView": {
+      "count": 621217,
+      "near_ad_count": 76836,
+      "p_near_ad": 0.12368624812263669
+    }
+  },
+  "global_p_near_ad": 0.07645618691129588,
+  "created_at": 1778698586.9280903
+}

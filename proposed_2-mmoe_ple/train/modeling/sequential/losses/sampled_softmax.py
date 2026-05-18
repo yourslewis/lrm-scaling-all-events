@@ -58,10 +58,12 @@ class SampledSoftmaxLoss(AutoregressiveLoss):
         assert supervision_ids.size() == supervision_embeddings.size()[:-1]
         assert supervision_ids.size() == supervision_weights.size()
 
+        sampler_kwargs = dict(kwargs)
+        sampler_kwargs["query_embeddings"] = output_embeddings
         sampled_ids, sampled_negative_embeddings = negatives_sampler(
             positive_ids=supervision_ids,
             num_to_sample=self._num_to_sample,
-            **kwargs,
+            **sampler_kwargs,
         )
         positive_embeddings = negatives_sampler.normalize_embeddings(
             supervision_embeddings
@@ -146,6 +148,14 @@ class SampledSoftmaxLoss(AutoregressiveLoss):
             .squeeze(1)
             .long()
         )
+        if "supervision_type_ids" in kwargs and kwargs["supervision_type_ids"] is not None:
+            kwargs["supervision_type_ids"] = (
+                torch.ops.fbgemm.dense_to_jagged(
+                    kwargs["supervision_type_ids"].unsqueeze(-1).float(), [jagged_id_offsets]
+                )[0]
+                .squeeze(1)
+                .long()
+            )
         # jagged_seq_ids
         kwargs["jagged_seq_ids"] = torch.repeat_interleave(torch.arange(len(lengths), device=lengths.device), lengths)
         if "user_ids" in kwargs:

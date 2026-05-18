@@ -41,6 +41,7 @@ from data.eval import (
     eval_metrics_v3_from_tensors,
     get_eval_state_v2,
 )
+from trainer.seeding import get_gin_configured_seed, seed_everything
 from trainer.util import make_model
 from trainer.train import Trainer  # noqa: F401 - register gin configurables
 from trainer.data_loader import create_data_loader
@@ -95,6 +96,9 @@ def main(argv):
 
     if gin_config_file is not None:
         gin.parse_config_file(gin_config_file)
+
+    random_seed = get_gin_configured_seed()
+    seed_everything(random_seed, rank=rank, log_prefix="evaluate_checkpoint")
 
     # Setup DDP
     torch.cuda.set_device(local_rank)

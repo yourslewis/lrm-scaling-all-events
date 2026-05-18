@@ -178,7 +178,7 @@ class TestLossConfig:
 
 class TestSamplingConfig:
     def test_strategies(self):
-        for strategy in ["InBatch", "RotateInDomainGlobalNegativesSampler", "Hybrid"]:
+        for strategy in ["InBatch", "RotateInDomainGlobalNegativesSampler", "Hybrid", "MixedHardGlobalNegativesSampler"]:
             cfg = SamplingConfig.from_dict({"strategy": strategy})
             assert cfg.strategy == strategy
 

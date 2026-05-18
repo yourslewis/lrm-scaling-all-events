@@ -2,6 +2,8 @@ import gin
 import torch
 import torch.nn as nn
 import logging
+import json
+from pathlib import Path
 
 from modeling.sequential.autoregressive_losses import (
     BCELoss,
@@ -51,6 +53,10 @@ from modeling.sequential.nagatives_sampler import (
     InBatchNegativesSampler,
     RotateInDomainGlobalNegativesSampler,
     HybridNegativesSampler,
+)
+from modeling.sequential.hard_negative_sampler import (
+    HybridDomainInBatchHardGlobalNegativesSampler,
+    MixedHardGlobalNegativesSampler,
 )
 
 from modeling.sequential.embedding_modules import (
@@ -119,6 +125,14 @@ def make_model(
     sampling_strategy: str = "local",  
     item_l2_norm: bool = True,  
     l2_norm_eps: float = 1e-6,
+    hard_negative_fraction: float = 0.25,
+    hard_negative_candidate_pool_size: int = 1024,
+    hard_negative_rank_start: int = 32,
+    hard_negative_rank_end: int = 512,
+    hard_negative_filter_batch_positives: bool = False,
+    hard_negative_filter_resample_attempts: int = 3,
+    hybrid_in_batch_fraction: float = 0.50,
+    hybrid_global_hard_fraction: float = 0.30,
     supervision_domain_weights: Optional[Dict[int, float]] = None,
     supervision_train_domains: Optional[List[int]] = None,
     supervision_target_position: str = "all",
@@ -165,6 +179,11 @@ def make_model(
     ad_anchor_strong_event_gate: float = 1.0,
     ad_anchor_page_title_gate: float = 0.4,
     ad_anchor_msn_gate: float = 0.1,
+    ad_anchor_outlook_gate: float = 0.0,
+    ad_anchor_empirical_prob_path: str = "",
+    ad_anchor_empirical_p_low: float = 0.0,
+    ad_anchor_empirical_p_high: float = 0.20,
+    ad_anchor_empirical_gate_power: float = 1.0,
     ad_anchor_semantic_sim_min: float = 0.20,
     ad_anchor_semantic_sim_max: float = 0.65,
     ad_anchor_semantic_gate_power: float = 1.0,
@@ -194,6 +213,14 @@ def make_model(
         sampling_strategy=sampling_strategy,
         item_l2_norm=item_l2_norm,
         l2_norm_eps=l2_norm_eps,
+        hard_negative_fraction=hard_negative_fraction,
+        hard_negative_candidate_pool_size=hard_negative_candidate_pool_size,
+        hard_negative_rank_start=hard_negative_rank_start,
+        hard_negative_rank_end=hard_negative_rank_end,
+        hard_negative_filter_batch_positives=hard_negative_filter_batch_positives,
+        hard_negative_filter_resample_attempts=hard_negative_filter_resample_attempts,
+        hybrid_in_batch_fraction=hybrid_in_batch_fraction,
+        hybrid_global_hard_fraction=hybrid_global_hard_fraction,
         supervision_domain_weights=supervision_domain_weights,
         supervision_train_domains=supervision_train_domains,
         supervision_target_position=supervision_target_position,
@@ -240,6 +267,11 @@ def make_model(
         ad_anchor_strong_event_gate=ad_anchor_strong_event_gate,
         ad_anchor_page_title_gate=ad_anchor_page_title_gate,
         ad_anchor_msn_gate=ad_anchor_msn_gate,
+        ad_anchor_outlook_gate=ad_anchor_outlook_gate,
+        ad_anchor_empirical_prob_path=ad_anchor_empirical_prob_path,
+        ad_anchor_empirical_p_low=ad_anchor_empirical_p_low,
+        ad_anchor_empirical_p_high=ad_anchor_empirical_p_high,
+        ad_anchor_empirical_gate_power=ad_anchor_empirical_gate_power,
         ad_anchor_semantic_sim_min=ad_anchor_semantic_sim_min,
         ad_anchor_semantic_sim_max=ad_anchor_semantic_sim_max,
         ad_anchor_semantic_gate_power=ad_anchor_semantic_gate_power,
@@ -275,6 +307,14 @@ class SequentialRetrieval(torch.nn.Module):
             sampling_strategy: str = "global",  
             item_l2_norm: bool = True,  
             l2_norm_eps: float = 1e-6,
+            hard_negative_fraction: float = 0.25,
+            hard_negative_candidate_pool_size: int = 1024,
+            hard_negative_rank_start: int = 32,
+            hard_negative_rank_end: int = 512,
+            hard_negative_filter_batch_positives: bool = False,
+            hard_negative_filter_resample_attempts: int = 3,
+            hybrid_in_batch_fraction: float = 0.50,
+            hybrid_global_hard_fraction: float = 0.30,
             supervision_domain_weights: Optional[Dict[int, float]] = None,
             supervision_train_domains: Optional[List[int]] = None,
             supervision_target_position: str = "all",
@@ -321,6 +361,11 @@ class SequentialRetrieval(torch.nn.Module):
             ad_anchor_strong_event_gate: float = 1.0,
             ad_anchor_page_title_gate: float = 0.4,
             ad_anchor_msn_gate: float = 0.1,
+            ad_anchor_outlook_gate: float = 0.0,
+            ad_anchor_empirical_prob_path: str = "",
+            ad_anchor_empirical_p_low: float = 0.0,
+            ad_anchor_empirical_p_high: float = 0.20,
+            ad_anchor_empirical_gate_power: float = 1.0,
             ad_anchor_semantic_sim_min: float = 0.20,
             ad_anchor_semantic_sim_max: float = 0.65,
             ad_anchor_semantic_gate_power: float = 1.0,
@@ -362,6 +407,14 @@ class SequentialRetrieval(torch.nn.Module):
         self.sampling_strategy = sampling_strategy
         self.item_l2_norm = item_l2_norm
         self.l2_norm_eps = l2_norm_eps
+        self.hard_negative_fraction = hard_negative_fraction
+        self.hard_negative_candidate_pool_size = hard_negative_candidate_pool_size
+        self.hard_negative_rank_start = hard_negative_rank_start
+        self.hard_negative_rank_end = hard_negative_rank_end
+        self.hard_negative_filter_batch_positives = hard_negative_filter_batch_positives
+        self.hard_negative_filter_resample_attempts = hard_negative_filter_resample_attempts
+        self.hybrid_in_batch_fraction = hybrid_in_batch_fraction
+        self.hybrid_global_hard_fraction = hybrid_global_hard_fraction
 
         self.multi_task_module_type = multi_task_module_type
         self.num_experts = num_experts
@@ -406,9 +459,42 @@ class SequentialRetrieval(torch.nn.Module):
         self.ad_anchor_strong_event_gate = ad_anchor_strong_event_gate
         self.ad_anchor_page_title_gate = ad_anchor_page_title_gate
         self.ad_anchor_msn_gate = ad_anchor_msn_gate
+        self.ad_anchor_outlook_gate = ad_anchor_outlook_gate
+        self.ad_anchor_empirical_prob_path = ad_anchor_empirical_prob_path
+        self.ad_anchor_empirical_p_low = ad_anchor_empirical_p_low
+        self.ad_anchor_empirical_p_high = ad_anchor_empirical_p_high
+        self.ad_anchor_empirical_gate_power = ad_anchor_empirical_gate_power
         self.ad_anchor_semantic_sim_min = ad_anchor_semantic_sim_min
         self.ad_anchor_semantic_sim_max = ad_anchor_semantic_sim_max
         self.ad_anchor_semantic_gate_power = ad_anchor_semantic_gate_power
+
+        empirical_gate = torch.ones(self.num_event_types + 1, dtype=torch.float32)
+        if self.ad_anchor_empirical_prob_path:
+            empirical_gate.zero_()
+            data = json.loads(Path(self.ad_anchor_empirical_prob_path).read_text())
+            by_type = data.get("event_type_prob", data)
+            name_to_id = {
+                "NativeClick": 1, "SearchClick": 2, "EdgePageTitle": 3,
+                "EdgeSearchQuery": 4, "OrganicSearchQuery": 5, "UET": 6,
+                "OutlookSenderDomain": 7, "UETShoppingCart": 8, "UETShoppingView": 9,
+                "AbandonCart": 10, "EdgeShoppingCart": 11, "EdgeShoppingPurchase": 12,
+                "ChromePageTitle": 13, "MSN": 14,
+            }
+            denom = max(float(self.ad_anchor_empirical_p_high - self.ad_anchor_empirical_p_low), 1e-6)
+            for key, val in by_type.items():
+                etype_id = name_to_id.get(str(key), None)
+                if etype_id is None:
+                    try:
+                        etype_id = int(key)
+                    except Exception:
+                        continue
+                prob = float(val.get("p_near_ad", val) if isinstance(val, dict) else val)
+                gate = max(0.0, min(1.0, (prob - float(self.ad_anchor_empirical_p_low)) / denom))
+                if float(self.ad_anchor_empirical_gate_power) != 1.0:
+                    gate = gate ** float(self.ad_anchor_empirical_gate_power)
+                if 0 <= etype_id < empirical_gate.numel():
+                    empirical_gate[etype_id] = gate
+        self.register_buffer("ad_anchor_empirical_gate", empirical_gate, persistent=False)
 
         self.model, self.ar_loss, self.negatives_sampler, \
         self.model_debug_str, self.interaction_module_debug_str, self.sampling_debug_str, self.loss_debug_str = self.setup()
@@ -733,6 +819,55 @@ class SequentialRetrieval(torch.nn.Module):
             )
             negatives_sampler = {"train": rotate_negatives_sampler, "eval": rotate_negatives_sampler}
             sampling_debug_str = rotate_negatives_sampler.debug_str()
+        elif self.sampling_strategy == "MixedHardGlobalNegativesSampler":
+            hard_negatives_sampler = MixedHardGlobalNegativesSampler(
+                item_emb=model._embedding_module,
+                domain_offset=self.domain_offset,
+                shard_size=self.shard_size,
+                shard_counts=self.shard_counts,
+                l2_norm=self.item_l2_norm,
+                l2_norm_eps=self.l2_norm_eps,
+                hard_fraction=self.hard_negative_fraction,
+                hard_candidate_pool_size=self.hard_negative_candidate_pool_size,
+                hard_rank_start=self.hard_negative_rank_start,
+                hard_rank_end=self.hard_negative_rank_end,
+                filter_batch_positives=self.hard_negative_filter_batch_positives,
+                filter_resample_attempts=self.hard_negative_filter_resample_attempts,
+            )
+            rotate_negatives_sampler = RotateInDomainGlobalNegativesSampler(
+                item_emb=model._embedding_module,
+                domain_offset=self.domain_offset,
+                shard_size=self.shard_size,
+                shard_counts=self.shard_counts,
+                l2_norm=self.item_l2_norm,
+                l2_norm_eps=self.l2_norm_eps,
+            )
+            negatives_sampler = {"train": hard_negatives_sampler, "eval": rotate_negatives_sampler}
+            sampling_debug_str = hard_negatives_sampler.debug_str()
+        elif self.sampling_strategy == "HybridDomainInBatchHardGlobalNegativesSampler":
+            hybrid_sampler = HybridDomainInBatchHardGlobalNegativesSampler(
+                item_emb=model._embedding_module,
+                domain_offset=self.domain_offset,
+                shard_size=self.shard_size,
+                shard_counts=self.shard_counts,
+                l2_norm=self.item_l2_norm,
+                l2_norm_eps=self.l2_norm_eps,
+                in_batch_fraction=self.hybrid_in_batch_fraction,
+                global_hard_fraction=self.hybrid_global_hard_fraction,
+                hard_candidate_pool_size=self.hard_negative_candidate_pool_size,
+                hard_rank_start=self.hard_negative_rank_start,
+                hard_rank_end=self.hard_negative_rank_end,
+            )
+            rotate_negatives_sampler = RotateInDomainGlobalNegativesSampler(
+                item_emb=model._embedding_module,
+                domain_offset=self.domain_offset,
+                shard_size=self.shard_size,
+                shard_counts=self.shard_counts,
+                l2_norm=self.item_l2_norm,
+                l2_norm_eps=self.l2_norm_eps,
+            )
+            negatives_sampler = {"train": hybrid_sampler, "eval": rotate_negatives_sampler}
+            sampling_debug_str = hybrid_sampler.debug_str()
         elif self.sampling_strategy == "Hybrid":
             in_batch_negatives_sampler = InBatchNegativesSampler(
                 l2_norm=self.item_l2_norm,                      # set to be True
@@ -888,7 +1023,10 @@ class SequentialRetrieval(torch.nn.Module):
                 raise ValueError("semantic_similarity gate requires label_embeddings")
             # Pairwise cosine similarity between target-event embedding i and
             # candidate ad-anchor embedding j. Use the best gated proximity.
-            emb = torch.nn.functional.normalize(label_embeddings.float(), p=2, dim=-1)
+            # Treat semantic similarity as a detached sample-weighting heuristic.
+            # Do not backprop through cosine/gate: fractional powers (power < 1)
+            # have singular gradients near zero and caused NaNs in P22.
+            emb = torch.nn.functional.normalize(label_embeddings.detach().float(), p=2, dim=-1)
             sim = torch.matmul(emb, emb.transpose(1, 2))  # [B, N(current), N(anchor)]
             sim_gate = (sim - float(self.ad_anchor_semantic_sim_min)) / max(
                 float(self.ad_anchor_semantic_sim_max - self.ad_anchor_semantic_sim_min), 1e-6
@@ -896,7 +1034,8 @@ class SequentialRetrieval(torch.nn.Module):
             sim_gate = sim_gate.clamp(0.0, 1.0)
             if float(self.ad_anchor_semantic_gate_power) != 1.0:
                 sim_gate = sim_gate.pow(float(self.ad_anchor_semantic_gate_power))
-            gated_proximity = (proximity * sim_gate).masked_fill(~anchor_mask, 0.0)
+            sim_gate = torch.nan_to_num(sim_gate, nan=0.0, posinf=1.0, neginf=0.0).detach()
+            gated_proximity = (proximity.detach() * sim_gate).masked_fill(~anchor_mask, 0.0)
             best_boost_factor = gated_proximity.max(dim=2).values
         else:
             gate = torch.ones_like(weights)
@@ -916,12 +1055,19 @@ class SequentialRetrieval(torch.nn.Module):
                         torch.full_like(gate, float(self.ad_anchor_page_title_gate)),
                         gate,
                     )
-                # MSN can be tuned separately; OutlookSenderDomain remains zero.
+                # MSN and Outlook can be tuned separately.
                 gate = torch.where(
                     next_type_ids == 14,
                     torch.full_like(gate, float(self.ad_anchor_msn_gate)),
                     gate,
                 )
+                gate = torch.where(
+                    next_type_ids == 7,
+                    torch.full_like(gate, float(self.ad_anchor_outlook_gate)),
+                    gate,
+                )
+            elif mode == "empirical_prob":
+                gate = self.ad_anchor_empirical_gate[next_type_ids.clamp(min=0, max=self.ad_anchor_empirical_gate.numel() - 1)]
             elif mode not in ("none", ""):
                 raise ValueError(f"Unsupported ad_anchor_event_gate_mode={mode}")
             best_boost_factor = best_proximity * gate
@@ -1043,6 +1189,7 @@ class SequentialRetrieval(torch.nn.Module):
                     supervision_embeddings=supervision_embeddings,
                     supervision_weights=task_weights,
                     negatives_sampler=self.negatives_sampler['train'],
+                    supervision_type_ids=next_type_ids if torch.is_grad_enabled() else None,
                 )
                 task_loss = get_weighted_loss(task_loss, task_aux, weights=self.loss_weights or {})
                 total_loss = total_loss + task_loss
@@ -1130,6 +1277,7 @@ class SequentialRetrieval(torch.nn.Module):
             supervision_embeddings=supervision_embeddings,    # [B, N, D]    
             supervision_weights=supervision_weights,
             negatives_sampler=self.negatives_sampler['train'],
+            supervision_type_ids=next_type_ids if torch.is_grad_enabled() else None,
         )  # [B, N]
 
         if ad_proximity_weights is not None:
