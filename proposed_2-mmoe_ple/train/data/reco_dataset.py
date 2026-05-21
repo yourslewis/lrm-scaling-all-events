@@ -14,6 +14,7 @@
 
 # pyre-unsafe
 import os
+import json
 from dataclasses import dataclass
 from typing import List
 
@@ -253,20 +254,38 @@ def get_reco_dataset(
             )
         else:
             raise ValueError(f"Unknown experiment {experiment_name} for dataset {dataset_name}")
-        return RecoDataset(
-            dataset_name=dataset_name,
-            max_sequence_length=max_sequence_length,
-            domain_to_item_id_range={
+        metadata_path = os.path.join(prefix, "metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path) as f:
+                dataset_meta = json.load(f)
+            domain_meta = dataset_meta.get("domains", {})
+            domain_to_item_id_range = {
+                int(d): (20, int(info["shard_size"]) - 1)
+                for d, info in domain_meta.items()
+            }
+            # Current semantic embedding stores are single shard_0.npy per domain;
+            # use a global shard_size larger than every domain so new v3 ids do not
+            # incorrectly map to non-existent shard_1.npy.
+            shard_size = max(int(info["shard_size"]) for info in domain_meta.values())
+            shard_counts = {int(d): 1 for d in domain_meta.keys()}
+        else:
+            domain_to_item_id_range = {
                 0: (20, 830_986),
                 1: (20, 33_693_769),
                 2: (20, 7_940_233),
                 3: (20, 791_639),
                 4: (20, 242_592),
-            },
+            }
+            shard_size = 34_000_000
+            shard_counts = {0: 1, 1: 1, 2: 1, 3: 1, 4: 1}
+        return RecoDataset(
+            dataset_name=dataset_name,
+            max_sequence_length=max_sequence_length,
+            domain_to_item_id_range=domain_to_item_id_range,
             embd_dim=384,
             domain_offset=1_000_000_000,
-            shard_size=34_000_000,
-            shard_counts={0: 1, 1: 1, 2: 1, 3: 1, 4: 1},
+            shard_size=shard_size,
+            shard_counts=shard_counts,
             num_event_types=len(semantic_next_event_prediction.EVENT_TYPE_DICT),
             positional_sampling_ratio=positional_sampling_ratio,
             train_dataset=train_dataset,

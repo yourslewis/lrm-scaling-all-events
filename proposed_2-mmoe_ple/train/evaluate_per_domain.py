@@ -134,6 +134,7 @@ def main(argv):
         domain_to_item_id_range=dataset.domain_to_item_id_range,
         precomputed_embeddings_domain_to_dir=precomputed_embeddings_domain_to_dir,
         domain_offset=dataset.domain_offset,
+        shard_size=dataset.shard_size,
     )
     eval_data_loader = create_data_loader(
         dataset.eval_dataset,
@@ -143,7 +144,14 @@ def main(argv):
         random_seed=42, collate_fn=collate_fn,
     )
 
-    model.negatives_sampler["eval"].rotate()
+    # Some experiment branches' eval paths can touch either the eval sampler
+    # or train sampler depending on the loss/eval-state wrapper. Rotate every
+    # sampler that supports it so hard/global pools are initialized.
+    _rotated_sampler_ids = set()
+    for _sampler in model.negatives_sampler.values():
+        if hasattr(_sampler, "rotate") and id(_sampler) not in _rotated_sampler_ids:
+            _sampler.rotate()
+            _rotated_sampler_ids.add(id(_sampler))
 
     eval_state = get_eval_state_v2(model=model, top_k_method=FLAGS.top_k_method)
 
@@ -183,9 +191,12 @@ def main(argv):
 
         # Accumulate per-domain
         for k, v in eval_dict.items():
-            if v.dim() == 0:
-                # scalar (e.g., log_pplx) - add to all domains proportionally
+            # Only split batch-shaped metrics by domain. Some metrics are scalar
+            # or singleton tensors (e.g. log_pplx), and cannot be indexed by the
+            # per-example domain mask.
+            if v.dim() == 0 or v.numel() != label_domains.numel():
                 continue
+            v = v.reshape(-1)
             for d in range(5):
                 mask = (label_domains == d)
                 if mask.any():
