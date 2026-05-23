@@ -213,11 +213,21 @@ def monitor_run(proc: subprocess.Popen[Any], out: Path, log: Path, min_batch: in
         "monitor": str(mon_path) if mon_path else None,
         "latest": metrics_for(latest),
         "best_monitor": metrics_for(best),
+        "score_best_batch": best_batch or None,
+        "score_best_value": best_score,
         "log": str(log),
     }
 
 
 def find_best_checkpoint(out: Path, monitor_summary: dict[str, Any]) -> Path | None:
+    # Prefer the checkpoint whose validation transfer score peaked. The trainer's
+    # built-in `best_checkpoint_ndcg_10.pt` is still useful as a fallback, but the
+    # FullTrain columns are meant to answer the Ads/overall transfer question.
+    score_best_batch = monitor_summary.get("score_best_batch")
+    if score_best_batch is not None:
+        ckpts = sorted(out.glob(f"*/ckpts/checkpoint_batch{int(score_best_batch):07d}.pt"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if ckpts:
+            return ckpts[0]
     mon_path = monitor_summary.get("monitor")
     if mon_path:
         try:
