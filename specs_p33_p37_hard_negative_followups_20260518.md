@@ -128,3 +128,99 @@ Transition-graph medium-overlap negatives are better controlled than raw embeddi
 3. If P32/P33 show any Ads lift but instability: run P34 curriculum.
 4. If Ads remains the main gap: run P35 Ads-target-only hard negatives.
 5. Longer build: P36 filtered pools, then P37 GNNO medium-overlap mining.
+
+---
+
+## Full-training-data retrain round — P14/P20/P23/P28/P29/P31/P32/P33B
+
+### Goal
+
+The old P14→P33B comparisons were trained on the smaller `all_events_v2` processed split and then re-evaluated on the frozen v3 validation slice. This round asks a different question:
+
+> If the same model/negative-sampling recipes are retrained on the full v3-preserve training set, do the frozen-7 OHR/AHR transfer metrics improve?
+
+This is not a new architecture search. It is a controlled data-scale retrain of the existing recipes.
+
+### Data and evaluation protocol
+
+Training data:
+
+```text
+/home/yourslewis/lrm_benchmarkv4/processed/all_events_v3_full_preserve/train
+```
+
+Frozen validation target:
+
+```text
+/home/yourslewis/lrm_benchmarkv4/processed/all_events_v3_full_preserve_eval7raw_0_6/eval
+```
+
+The runner materializes a hybrid dataset path with the full-train split and frozen-7 eval split:
+
+```text
+/home/yourslewis/lrm_benchmarkv4/processed/all_events_v3_full_preserve_train_frozen7eval
+```
+
+Use v3 full-preserve semantic embeddings:
+
+```text
+/home/yourslewis/lrm_benchmarkv4/processed/semantic_embeddings_v3_full_preserve/domain_{0..4}
+```
+
+All final reported `FullTrain OHR` / `FullTrain AHR` values must come from full frozen-7 evaluation of the selected/best checkpoint, not from the small in-training validation window.
+
+### Model recipes to retrain sequentially
+
+Retrain one model at a time, preserving each original recipe:
+
+| Table id | Recipe to preserve | Config source |
+|---|---|---|
+| `P14_latest` | stabilized target-event-group residual baseline | `proposed14_stabilized_group_residual.gin` |
+| `P20_s300_page10_best` | P20 ad-anchor grid, sigma=300, PageTitle gate=1.0 | `generated_p20_grid/p20_s300_page10.gin` |
+| `P23_best` | coordinate-search selected ad-anchor gates, PageTitle=0.9 | `generated_p23_coordinate_search/p23_page_s10_p09_m01_o00.gin` |
+| `P28n64_best` | domain-aware global random train negatives, n=64 | `generated_p28_domain_random_negatives/p28_domain_rand_n64.gin` |
+| `P29b_best` | mixed hard/global negatives, hard fraction=0.25, n=32 | `generated_p29_mixed_hard_global_negatives/p29b_hardmix_f025_n32.gin` |
+| `P31b_best` | denoised hard/global negatives, hard fraction=0.35, n=32 | `generated_p31_denoised_hard_negatives/p31b_denoised_hardmix_f035_n32.gin` |
+| `P32a_best` | hybrid inbatch50/hard30/global20, n=32 | `generated_p32_hybrid_inbatch_hard_global/p32a_hybrid_inbatch50_hard30_global20_n32.gin` |
+| `P33B_best` | broad/P23-style inbatch90 + hard10, n=32 | `generated_p33_inbatch_hard_followups/p33b_p23_inbatch90_hard10_n32.gin` |
+
+### Monitoring and early stopping
+
+Run sequentially, not as a parallel sweep. For each model:
+
+1. Train with validation every 1,000 batches.
+2. Track the transfer-oriented validation score:
+
+```text
+score = 0.4 * Overall_HR@10 + 0.6 * Ads_HR@10
+```
+
+3. Keep the validation-monitor best checkpoint.
+4. Stop early once the score has peaked and failed to improve for the patience window:
+
+```text
+min_batch = 12,000
+patience_batches = 8,000
+max_batch = 70,000
+```
+
+5. After stop/completion, run full frozen-7 evaluation on the selected best checkpoint and write table-compatible rows to:
+
+```text
+results_v2/fulltrain_retrains_20260522/lrm_v3_fulltrain_eval_metrics.json
+```
+
+The local comparison report can mirror those rows into:
+
+```text
+/Users/yourslewis/.openclaw/workspace-rex/tmp/lrm_v3_fulltrain_eval_metrics.json
+```
+
+### Reporting columns
+
+The hourly comparison table should keep the historical old-vs-frozen columns and add:
+
+- `FullTrain OHR`: full-training-data retrain, frozen-7 Overall HR@10.
+- `FullTrain AHR`: full-training-data retrain, frozen-7 Ads HR@10.
+
+Until a model finishes retrain + final frozen-7 eval, render these as `—` rather than substituting old or baseline metrics.
