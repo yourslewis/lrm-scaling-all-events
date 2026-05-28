@@ -80,7 +80,7 @@ def build_infer_cmd(args, *, run_id: str, out_dir: Path, max_targets: int | None
         "--model-submission-id", args.model_submission_id,
         "--prediction-run-id", run_id,
         "--context-policy", args.context_policy,
-        "--output-predictions", str(out_dir / "predictions.jsonl"),
+        "--output-mode", args.output_mode,
         "--output-inference-log", str(out_dir / "inference_log.jsonl"),
         "--output-target-ids", str(out_dir / "prediction_target_ids.txt"),
         "--device", args.device,
@@ -90,6 +90,22 @@ def build_infer_cmd(args, *, run_id: str, out_dir: Path, max_targets: int | None
         "--history-batch-size", str(args.history_batch_size),
         "--seed", str(args.seed),
     ]
+    if args.candidate_cache_max_banks:
+        cmd += ["--candidate-cache-max-banks", str(args.candidate_cache_max_banks)]
+    if args.candidate_cache_dir:
+        cmd += ["--candidate-cache-dir", args.candidate_cache_dir]
+    if args.candidate_cache_disk_dtype:
+        cmd += ["--candidate-cache-disk-dtype", args.candidate_cache_disk_dtype]
+    if args.candidate_cache_timing_sync_cuda:
+        cmd += ["--candidate-cache-timing-sync-cuda"]
+    if args.output_mode in {"full", "both"}:
+        cmd += ["--output-predictions", str(out_dir / "predictions.jsonl")]
+    if args.output_mode in {"compact", "both"}:
+        cmd += [
+            "--output-compact", str(out_dir / "compact_predictions.jsonl"),
+            "--output-metrics-json", str(out_dir / "compact_metrics.json"),
+            "--compact-top-k", str(args.compact_top_k),
+        ]
     if args.target_jsonl:
         cmd += ["--target-jsonl", args.target_jsonl]
     else:
@@ -108,6 +124,8 @@ def build_infer_cmd(args, *, run_id: str, out_dir: Path, max_targets: int | None
 def build_eval_cmd(args, *, run_dir: Path, output_json: Path) -> list[str] | None:
     if not args.evaluator:
         return None
+    if args.output_mode == "compact":
+        raise SystemExit("official evaluator requires full predictions; use --output-mode full/both or omit --evaluator")
     if not (args.target_manifest and args.candidate_set_manifest):
         raise SystemExit("--evaluator requires --target-manifest and --candidate-set-manifest")
     return [
@@ -147,10 +165,16 @@ def main() -> int:
     ap.add_argument("--model-submission-id", required=True)
     ap.add_argument("--context-policy", required=True)
     ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--output-mode", choices=["full", "compact", "both"], default="full")
+    ap.add_argument("--compact-top-k", type=int, default=10)
     ap.add_argument("--chunk-size", type=int, default=4096)
     ap.add_argument("--target-batch-size", type=int, default=2048)
     ap.add_argument("--max-sequence-length", type=int, default=200)
     ap.add_argument("--history-batch-size", type=int, default=64)
+    ap.add_argument("--candidate-cache-max-banks", type=int, default=0)
+    ap.add_argument("--candidate-cache-dir")
+    ap.add_argument("--candidate-cache-disk-dtype", choices=["float32"], default="float32")
+    ap.add_argument("--candidate-cache-timing-sync-cuda", action="store_true")
     ap.add_argument("--seed", type=int, default=20260526)
     ap.add_argument("--equivalence-check-targets", type=int, default=0)
     ap.add_argument("--burn-in-targets", type=int, default=100)
@@ -188,9 +212,11 @@ def main() -> int:
         write_json(report_path, report)
         return rc
 
-    pred_path = burn_dir / "predictions.jsonl"
+    pred_path = burn_dir / ("compact_predictions.jsonl" if args.output_mode == "compact" else "predictions.jsonl")
+    compact_path = burn_dir / "compact_predictions.jsonl"
     scored = count_jsonl(str(pred_path))
     bytes_written = pred_path.stat().st_size
+    compact_bytes_written = compact_path.stat().st_size if compact_path.exists() else None
     targets_per_hour = scored / elapsed * 3600.0
     bytes_per_target = bytes_written / max(scored, 1)
     estimated_hours = total_targets / max(targets_per_hour, 1e-9)
@@ -218,7 +244,15 @@ def main() -> int:
         "targets_per_hour": targets_per_hour,
         "bytes_per_target": bytes_per_target,
         "estimated_hours_full_set": estimated_hours,
-        "estimated_prediction_jsonl_gb_full_set": estimated_gb,
+        "output_mode": args.output_mode,
+        "estimated_output_jsonl_gb_full_set": estimated_gb,
+        "estimated_prediction_jsonl_gb_full_set": estimated_gb if args.output_mode in {"full", "both"} else None,
+        "burn_in_compact_bytes": compact_bytes_written,
+        "estimated_compact_jsonl_gb_full_set": (
+            (compact_bytes_written / max(scored, 1) * total_targets) / (1024 ** 3)
+            if compact_bytes_written is not None
+            else estimated_gb if args.output_mode == "compact" else None
+        ),
         "thresholds": {
             "max_estimated_hours": args.max_estimated_hours,
             "max_estimated_jsonl_gb": args.max_estimated_jsonl_gb,
