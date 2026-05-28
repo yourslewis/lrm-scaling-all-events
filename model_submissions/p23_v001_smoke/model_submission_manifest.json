@@ -1,0 +1,79 @@
+{
+  "schema_version": "lrm_model_submission_manifest_v001",
+  "benchmark_version": "lrm_benchmark_v001",
+  "model_submission_id": "p23_page_s10_p09_m01_o00.v001_smoke",
+  "model_family": "legacy_p23_hstu_mmoe_ple_smoke_adapter",
+  "package_created_at": "2026-05-26T15:14:00Z",
+  "ml_engineer_owner": "Rex subagent P23 adapter smoke recovery lane",
+  "package_digest": "sha256:0a32309e60fc61a353564f78f42cf299db58a41482c0905ee70af4de5c3d6261",
+  "source": {
+    "repo_or_path": "/home/yourslewis/lrm-scaling-all-events",
+    "commit_or_version": "7dab935a74c1002e7b9b229aafc15b090e78cb1c; branch=feature/p18-ad-proximity-validation; dirty_count_observed=169"
+  },
+  "supported_candidate_protocol_labels": ["banked_domain_negatives_10k_b1000_v001"],
+  "prediction_output_format": "jsonl",
+  "entrypoint": {
+    "command_template": "CUDA_VISIBLE_DEVICES=0 /home/yourslewis/miniconda3/envs/hstu/bin/python scripts/p23_v001_infer.py --benchmark-version lrm_benchmark_v001 --target-sample-jsonl artifacts/target_sample.jsonl --history-prefix-source <canonical_row_array_root> --bank-root artifacts/production_banked_candidates --bank-generator vendor/banked_candidate_generator_v001.py --history-reader vendor/history_prefix_reader_v001.py --gin-config-file <p23_page_s10_p09_m01_o00.gin> --checkpoint-path <best_checkpoint_ndcg_10.pt> --model-submission-id p23_page_s10_p09_m01_o00.v001_smoke --prediction-run-id <run_id> --context-policy context_policy.json --output-predictions <run_dir>/predictions.jsonl --output-inference-log <run_dir>/inference_log.jsonl --device cuda:0 --seed 20260526",
+    "uses_embedding_domain_manifest": true,
+    "notes": "Smoke entrypoint is model-backed and bounded. It relies on the approved v001 static full-preserve embedding-domain manifest but receives the concrete remote embedding root through adapter defaults."
+  },
+  "environment": {
+    "environment_type": "locked_python_env",
+    "digest": "sha256:ad195388ddebe71153d9b0d86b2f7b24d280d707db05025d144cc00baf6ee8b0",
+    "hardware_requirements": {
+      "default_gpu_count": 1,
+      "gpu_memory_gb": 24,
+      "cpu_only": false,
+      "multi_gpu_requested": false,
+      "expected_runtime_hours": 0.1
+    }
+  },
+  "runtime_policy": {
+    "max_wall_clock_hours": 1,
+    "default_hard_cap_hours": 24,
+    "infra_retry_limit": 1,
+    "model_failure_retry_allowed": false
+  },
+  "context_policy": {
+    "path": "context_policy.json",
+    "digest": "sha256:a57719e955b392dad8ab916dfd70babb779f1983de5b9755742a6cdce12acb25"
+  },
+  "embedding_domain_manifest": {
+    "path": "specs/lrm-experiment-framework/phase7_artifacts/manifest_approval_candidate/embedding_manifest.approval_candidate.json",
+    "digest": "sha256:6e613115a7400d9ce2fff5b518bff5ca4035a7bbe722407f208c9f8943561915",
+    "schema_version": "lrm_embedding_domain_manifest_v001",
+    "legacy_names_forbidden": true
+  },
+  "determinism": {
+    "deterministic": true,
+    "determinism_level": "rank_equivalent",
+    "seed_required": true,
+    "notes": "The adapter sets torch.manual_seed(20260526), uses eval/inference mode, regenerates deterministic banked candidates, and applies deterministic score-desc/candidate-id tie-breaks. GPU kernels may not be bitwise deterministic but should be rank-equivalent for this smoke."
+  },
+  "legacy_name_policy": {
+    "legacy_names_forbidden": true,
+    "forbidden_names_absent_from_package": true,
+    "forbidden_names": [
+      "ads_semantic_embd_path",
+      "web_browsing_semantic_embd_path",
+      "shopping_semantic_embd_path",
+      "ads_pure_corpus_embd_path",
+      "other_semantic_embd_path"
+    ]
+  },
+  "official_metrics_source_of_truth": "Testing ML Engineer official evaluator; model code is not source of truth",
+  "artifact_digests": [
+    {"path": "scripts/p23_v001_infer.py", "digest": "sha256:6fbe42af675bfe21a142f13625a1f8a1bdb31726cc6a00697ce2ccbb4f0973f2"},
+    {"path": "vendor/history_prefix_reader_v001.py", "digest": "sha256:aa99dc885f5d7c9758cd6758670aecdb9e361f23c0fbed236c0b88240e50200a"},
+    {"path": "vendor/banked_candidate_generator_v001.py", "digest": "sha256:f01b13f9453f0df26a53a5b1033e3fba36fe09de28ef12b5c5998ed305b32a50"},
+    {"path": "artifacts/target_sample.jsonl", "digest": "sha256:a39730a8e0681edddb1c7e462539591a34045027c0d8f39decf76bef7c7f94b1"},
+    {"path": "runs/p23_v001_smoke_20260526T1502Z_retry2/predictions.jsonl", "digest": "sha256:270abf4d322cd741634572aa2d65ce393f1d46098f3360bf82e2818fef251ca8"},
+    {"path": "runs/p23_v001_smoke_20260526T1502Z_retry2/evaluation_result.json", "digest": "sha256:1f6374faf29a94dd7badde34a7df4e7f13b90a1844d497abae57976fddfab550"},
+    {"path": "remote:p23_config", "digest": "sha256:e9273bb5b1fda649fb14a9835684f72f6074bdf0c2ccb62503636e2368646e96"},
+    {"path": "remote:p23_checkpoint", "digest": "sha256:d5f03c39290d20e4b8e20ea914ab72bacd02a6d27f0e720869d51f2964da3793"},
+    {"path": "phase7:official_evaluator/evaluator_v001.py", "digest": "sha256:d7e422609519a991e5022d17fe3010b0f320a0eb6517b0cca5f042ea958a7b1e"},
+    {"path": "phase7:production_target_manifest", "digest": "sha256:9f5c8cac50d1687a9b42c91e916901438baf0b44d36a71c6d55f9dc8165965fd"},
+    {"path": "phase7:production_candidate_set_manifest", "digest": "sha256:e079b071320ae678165691470dee3ce062033ab73116ef3114a19c6aa3303fcc"}
+  ],
+  "notes": "PARTIAL smoke package. The package_digest is computed over package file checksums excluding model_submission_manifest.json and ARTIFACT_CHECKSUMS.sha256 to avoid self-referential checksum cycles. Final ACCEPT requires clean source freeze, final P23 scoring-head contract, and event_type_id compatibility resolution."
+}

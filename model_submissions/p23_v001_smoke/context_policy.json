@@ -1,0 +1,83 @@
+{
+  "schema_version": "lrm_context_policy_v001",
+  "benchmark_version": "lrm_benchmark_v001",
+  "context_source": "benchmark_provided_context",
+  "policy_mode": "declared_transforms_over_full_available_prefix",
+  "transforms": [
+    {
+      "name": "legacy_p23_last_200_context_events",
+      "type": "last_n_events",
+      "description": "Use the last 200 chronological model-facing context events from the official HistoryPrefixReader because the P23 checkpoint was trained with max_sequence_length=200.",
+      "fields_used": ["encoded_id", "event_time_unix_s", "event_type_id"],
+      "parameters": {"max_events": 200, "order": "chronological_ascending", "padding": "none_for_smoke_nonempty_context_only"},
+      "target_time_relative": true,
+      "stays_within_benchmark_context": true,
+      "uses_learned_state": false,
+      "learned_state_artifact_ids": []
+    },
+    {
+      "name": "legacy_p23_event_type_id_compatibility_map",
+      "type": "other_declared",
+      "description": "Map v001 event_type_id values outside the P23 checkpoint event-type embedding range 0..13 to UNK=0 before inference; this is a compatibility shim and a reason this package is PARTIAL, not final.",
+      "fields_used": ["event_type_id"],
+      "parameters": {"supported_min_event_type_id": 0, "supported_max_event_type_id": 13, "unsupported_value_mapping": 0},
+      "target_time_relative": false,
+      "stays_within_benchmark_context": true,
+      "uses_learned_state": false,
+      "learned_state_artifact_ids": []
+    },
+    {
+      "name": "approved_v001_static_embedding_lookup",
+      "type": "approved_embedding_lookup",
+      "description": "Look up raw item embeddings for context and candidate encoded IDs using the approved v001 static_v3_full_preserve embedding-domain manifest, then apply the checkpoint's learned projection.",
+      "fields_used": ["encoded_id", "candidate_id"],
+      "parameters": {"embedding_manifest_id": "embedding_domain_manifest.v001.static_v3_full_preserve.20260525"},
+      "target_time_relative": false,
+      "stays_within_benchmark_context": true,
+      "uses_learned_state": true,
+      "learned_state_artifact_ids": ["p23_checkpoint_best_ndcg_10", "embedding_domain_manifest_v001_static_v3_full_preserve"]
+    }
+  ],
+  "input_fields_used": [
+    {"field_name": "encoded_id", "source_contract": "HistoryPrefixReader v001 MODEL_VISIBLE_EVENT_FIELDS", "purpose": "Legacy P23 sequence item ids and embedding lookup."},
+    {"field_name": "event_time_unix_s", "source_contract": "HistoryPrefixReader v001 MODEL_VISIBLE_EVENT_FIELDS", "purpose": "HSTU timestamp payload."},
+    {"field_name": "event_type_id", "source_contract": "HistoryPrefixReader v001 MODEL_VISIBLE_EVENT_FIELDS", "purpose": "Legacy P23 event-type input features after compatibility mapping."},
+    {"field_name": "candidate_id", "source_contract": "prediction_schema/candidate_set_manifest v001", "purpose": "Candidate embedding lookup and ranking."},
+    {"field_name": "target_canonical_domain_id", "source_contract": "target_manifest production compact sidecar", "purpose": "Select the correct bank artifact and candidate domain."},
+    {"field_name": "target_ts", "source_contract": "target_manifest production compact sidecar", "purpose": "Materialize [T1, target_ts) prefix through HistoryPrefixReader."},
+    {"field_name": "user_id", "source_contract": "target_manifest production compact sidecar", "purpose": "Materialize user prefix through HistoryPrefixReader."}
+  ],
+  "approved_artifact_dependencies": [
+    {"artifact_id": "p23_checkpoint_best_ndcg_10", "artifact_type": "model_package_artifact", "source": "/home/yourslewis/lrm-scaling-all-events/results_v2/p23_page_s10_p09_m01_o00/p23_page_s10_p09_m01_o00_20260514/ckpts/best_checkpoint_ndcg_10.pt", "digest": "sha256:d5f03c39290d20e4b8e20ea914ab72bacd02a6d27f0e720869d51f2964da3793"},
+    {"artifact_id": "p23_gin_config", "artifact_type": "model_package_artifact", "source": "/home/yourslewis/lrm-scaling-all-events/proposed_2-mmoe_ple/config/generated_p23_coordinate_search/p23_page_s10_p09_m01_o00.gin", "digest": "sha256:e9273bb5b1fda649fb14a9835684f72f6074bdf0c2ccb62503636e2368646e96"},
+    {"artifact_id": "embedding_domain_manifest_v001_static_v3_full_preserve", "artifact_type": "approved_data_contract_artifact", "source": "specs/lrm-experiment-framework/phase7_artifacts/manifest_approval_candidate/embedding_manifest.approval_candidate.json", "digest": "sha256:6e613115a7400d9ce2fff5b518bff5ca4035a7bbe722407f208c9f8943561915"},
+    {"artifact_id": "history_prefix_reader_v001", "artifact_type": "approved_data_contract_artifact", "source": "vendor/history_prefix_reader_v001.py", "digest": "sha256:aa99dc885f5d7c9758cd6758670aecdb9e361f23c0fbed236c0b88240e50200a"},
+    {"artifact_id": "banked_candidate_generator_v001", "artifact_type": "approved_data_contract_artifact", "source": "vendor/banked_candidate_generator_v001.py", "digest": "sha256:f01b13f9453f0df26a53a5b1033e3fba36fe09de28ef12b5c5998ed305b32a50"}
+  ],
+  "prohibited_access": {
+    "external_enrichment": false,
+    "web_or_search_lookup": false,
+    "external_user_or_item_metadata": false,
+    "future_events": false,
+    "outside_benchmark_context": false,
+    "unapproved_private_fields": false,
+    "eval_labels_or_metric_outputs": false
+  },
+  "temporal_guards": {
+    "target_time_exclusive_upper_bound": true,
+    "uses_only_events_with_event_time_lt_target_time": true,
+    "uses_only_approved_ingestion_time_policy": true,
+    "future_data_check_description": "HistoryPrefixReader v001 materializes strictly [T1, target_ts); adapter takes a suffix of that returned prefix and does not read at/after target_ts."
+  },
+  "notes": "PARTIAL smoke policy: candidate scoring is model-backed, but it uses a compatibility event-type mapping and the legacy base HSTU query path rather than a fully redesigned v001 P23 production adapter.",
+  "contract_notes": [
+    "Zero-context targets are not supported by this smoke adapter; deterministic sample excludes them.",
+    "The P23 checkpoint was trained before the v001 full-preserve candidate universe; the smoke uses approved v001 static embeddings for candidate coverage."
+  ],
+  "declaration": {
+    "declared_by_role": "ML Engineer",
+    "declared_by": "Rex subagent P23 adapter smoke recovery lane",
+    "declared_at": "2026-05-26T15:02:14Z",
+    "model_submission_id": "p23_page_s10_p09_m01_o00.v001_smoke"
+  }
+}
