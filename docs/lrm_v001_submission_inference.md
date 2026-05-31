@@ -8,19 +8,46 @@ official evaluator.
 ## Entrypoints
 
 - `proposed_2-mmoe_ple/infer/lrm_v001/sequential_submission_infer.py`
-  - emits `lrm_prediction_record_v001` JSONL;
+  - emits `lrm_prediction_record_v001` JSONL in `--output-mode full` (default);
+  - can emit derived compact records in `--output-mode compact` or both formats in `--output-mode both`;
   - reads frozen target sidecars or a bounded JSONL sample;
   - materializes history through the official v001 history reader;
   - generates frozen banked candidate sets through the official bank generator;
-  - ranks every candidate in each 10,001-candidate set;
+  - scores every candidate in each 10,001-candidate set in memory before deriving either output;
   - writes a separate inference log with context policy/debug information.
+- `proposed_2-mmoe_ple/infer/lrm_v001/compact_metrics.py`
+  - computes exact pessimistic positive rank after all candidates have been scored;
+  - writes optional topK candidates plus a digest of the full score order instead of 10,001 predictions per target;
+  - streams exact HR/AHR/OHR, NDCG@K, and MRR aggregates using only target rank statistics and per-user accumulators;
+  - is execution-side only and does not modify the official v001 data/candidate/prediction contract.
+- `proposed_2-mmoe_ple/infer/lrm_v001/compact_streaming_evaluate.py`
+  - recomputes aggregate metrics from an existing compact JSONL without materializing full prediction arrays.
 - `proposed_2-mmoe_ple/infer/lrm_v001/run_full_submission_with_safety_gate.py`
   - runs a bounded burn-in;
-  - estimates full-set runtime and JSONL storage;
+  - estimates full-set runtime and JSONL storage for full, compact, or both outputs;
   - writes `<run_id>.safety_gate.json`;
   - only starts full-set inference when `--auto-proceed-if-sane` is provided and
     thresholds pass;
   - optionally runs the official evaluator after full-set inference.
+
+## Compact/streaming output mode
+
+`--output-mode compact` is not an official submission JSONL. It is a derived
+execution/evaluation artifact for tractable full-set measurement:
+
+- the runner still regenerates and scores all 10,001 official banked candidates
+  for each target;
+- it computes the official pessimistic positive rank exactly:
+  `1 + count(score > positive_score) + count(score == positive_score and candidate != positive)`;
+- it persists `rank_stats`, optional `top_k`, `candidate_count`, candidate-set
+  digest, and a SHA-256 digest over the full sorted candidate/score order;
+- it streams exact aggregate metrics from positive ranks, matching the official
+  evaluator formulas for HR/AHR/OHR, NDCG@K, MRR, and macro-by-user aggregation;
+- it avoids writing the full 18M × 10,001 prediction array.
+
+Use `--output-mode both` on small samples to compare compact metrics against the
+full official evaluator output. Use `--output-mode compact` for full-set runs only
+after the burn-in gate is sane.
 
 ## Submission contract compliance
 
@@ -128,7 +155,10 @@ CUDA_VISIBLE_DEVICES=0 PYTHONUNBUFFERED=1 \
   --model-submission-id p23_page_s10_p09_m01_o00.v001_short_history60_sequential \
   --prediction-run-id "$RUN_ID" \
   --context-policy "$PKG/context_policy.json" \
+  --output-mode both \
   --output-predictions "$RUN/predictions.jsonl" \
+  --output-compact "$RUN/compact_predictions.jsonl" \
+  --output-metrics-json "$RUN/compact_metrics.json" \
   --output-inference-log "$RUN/inference_log.jsonl" \
   --output-target-ids "$RUN/prediction_target_ids.txt" \
   --device cuda:0 \
@@ -155,13 +185,12 @@ RUN_ID=p23_full_v001_sequential_$(date -u +%Y%m%dT%H%M%SZ)
   --model-submission-id p23_page_s10_p09_m01_o00.v001_full_sequential \
   --context-policy /home/yourslewis/lrm_benchmarkv4/processed/lrm_benchmark_v001_phase8_history_slice_reproduction/package/context_policy.json \
   --device cuda:0 \
+  --output-mode compact \
+  --compact-top-k 10 \
   --burn-in-targets 100 \
   --max-estimated-hours 24 \
   --max-estimated-jsonl-gb 200 \
-  --auto-proceed-if-sane \
-  --evaluator /home/yourslewis/lrm_benchmarkv4/processed/lrm_benchmark_v001_phase8_full_reproduction_execution/eval_workspace/specs/lrm-experiment-framework/phase7_artifacts/official_evaluator_package/evaluator_v001.py \
-  --target-manifest /home/yourslewis/lrm_benchmarkv4/processed/lrm_benchmark_v001_phase8_full_reproduction_execution/eval_workspace/manifests_path_repaired/target_manifest.production.path_repaired.json \
-  --candidate-set-manifest /home/yourslewis/lrm_benchmarkv4/processed/lrm_benchmark_v001_phase8_full_reproduction_execution/eval_workspace/manifests_path_repaired/candidate_set_manifest.production.path_repaired.json
+  --auto-proceed-if-sane
 ```
 
 If the burn-in estimate exceeds thresholds, the runner writes a blocker report
@@ -173,5 +202,6 @@ and exits without starting unbounded inference.
   query plus learned item projection. It does not add a benchmark-side feature or
   change evaluator semantics.
 - Long-history P23 metrics are latest-200 metrics, not full-history metrics.
-- Full-set JSONL can be large because every target writes all 10,001 ranked
-  candidates. Use the safety gate before launching a full run.
+- Full-set official JSONL can be enormous because every target writes all 10,001
+  ranked candidates. Use compact mode plus the safety gate for tractable
+  full-set metrics, and reserve full/both mode for bounded equivalence samples.
