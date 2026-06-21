@@ -1,76 +1,75 @@
-# AML Data-Prep Pipeline (regenerate LRM training data on Azure ML)
+# AML Data-Prep + Train Pipeline (SPLIT design — regenerate LRM data on Azure)
 
-Regenerates the LRM benchmark-v4 training data **entirely on AML / Singularity**,
-reading the raw TSV shards directly from cosmos (ADLS Gen1) — so no 168 GB upload
-from the gpu-trainer is needed. The output is functionally equivalent to the
-frozen L800 dataset (same deterministic vocab -> embeddings -> parquet recipe),
-so a model trained on it reproduces recall at a similar level.
+Regenerates LRM benchmark-v4 training data and runs L800 training **entirely on
+Azure ML**, reading raw shards from cosmos (ADLS Gen1). Uses a **split design** to
+work around the Singularity data-access limitation.
 
-## Why this exists
-Uploading the derived 168 GB embeddings to cosmos kept failing. The raw shards,
-however, are already on cosmos. Re-running the (scripted, deterministic) data
-pipeline on 8x A100 is faster than the original 2x 4090 run and avoids the upload.
+## The core constraint (why split)
+- A Singularity **VC job** node has **no identity** to read the cosmos ADLS datastore
+  → `ScriptExecution.StreamAccess.Authentication … NoIdentityOnCompute`.
+- The **compute instance** (its managed identity) **CAN** read cosmos (verified).
+- A VC job **CAN** read/write `workspaceblobstore` (verified: a 8xA100 nd40 job
+  mounted+read a blob file — see test `teal_caravan_4gt0wx8962`, Completed).
+
+So: only the **cosmos-touching steps run on the compute instance**; the **GPU steps
+run as VC jobs reading from blobstore**. No identity needs both cosmos + VC-submit.
 
 ## Data flow
-
 ```
-cosmos ADLS  (datastore: bingads_algo_pipelines_c08)
-  local/User/wenhlu/LRM_benchmark_v4/train/train_chunk_000..109.tsv   (110 shards)
-  local/User/wenhlu/LRM_benchmark_v4/val/val_chunk_0..39.tsv          (40 shards)
+cosmos LRM_benchmark_v4/{train(110),val(38)}   (ADLS Gen1)
         |
-        v   Job 1: data_prep/step1_collect_vocab_v2.py  (CPU, deterministic)
-  workspaceblobstore: derived/lrm_v4/vocab_v3/
-        domain_<d>_text2id.pkl, domain_<d>_id2text.pkl, vocab_meta.json
+        v   stage_on_ci.sh  — runs ON the compute instance (CI MSI reads cosmos)
+        |     step1 vocab + step3 parquet (small, ~2-6 GB, fits CI disk)
+        |     uploads -> workspaceblobstore as data assets:
+        |       azureml:lrm-v4-vocab:1   azureml:lrm-v4-seqview:1
         |
-        +--> Job 2: aml_dataprep/encode_embeddings_multigpu.py  (8x A100)
-        |        workspaceblobstore: derived/lrm_v4/semantic_embeddings_v3/
-        |            domain_<d>/shard_0.npy   (float16, indexed by item_id)
+        +--> jobs/2_encode.yml   (8x A100 nd40, reads vocab from blob)
+        |       -> workspaceblobstore derived/lrm_v4/semantic_embeddings_v3/domain_*/shard_0.npy
         |
-        +--> Job 3: data_prep/step3_v2.py  (CPU)
-                 workspaceblobstore: derived/lrm_v4/seqview_v001/
-                     train/part_XXXX.parquet (one per chunk) + eval/part_0000.parquet
-        |
-        v   Job 4 (existing): L800 training
-  reads seqview_v001 (data_path) + semantic_embeddings_v3 (domain_0..4)
+        +--> jobs/3_train.yml    (8x A100 nd40, reads seqview + embeddings from blob)
+                -> workspaceblobstore derived/lrm_v4/l800_output
 ```
 
-## Jobs
+## Target compute
+- VC: **ads-shared-nd40** (A100-40, `Singularity.ND96rs_v4`), `job_tier: Standard`
+  (live quota: 152 dedicated A100 free — the most non-preemptible A100 headroom).
+- Stage runs on compute instance **lrm-smoke-submitter** (pconv-aml-offline).
 
-| # | Spec | Compute | Reads | Writes |
-|---|------|---------|-------|--------|
-| 1 | `jobs/1_vocab.yml`   | 1 node (CPU use) | cosmos train+val | `vocab_v3` |
-| 2 | `jobs/2_encode.yml`  | 8x A100-40       | `vocab_v3`       | `semantic_embeddings_v3` |
-| 3 | `jobs/3_parquet.yml` | 1 node (CPU use) | cosmos + `vocab_v3` | `seqview_v001` |
-
-All target Singularity VC `ads-shared-nd40`, `job_tier: Standard`.
-
-## Submit (from the submitter compute instance, az ml v2 CLI)
-
+## Run order
 ```bash
-RG=wb-aml; WS=pconv-aml-offline
-az ml job create -f aml_dataprep/jobs/1_vocab.yml   -g $RG -w $WS   # wait -> Completed
-az ml job create -f aml_dataprep/jobs/2_encode.yml  -g $RG -w $WS   # 8x A100 encode
-az ml job create -f aml_dataprep/jobs/3_parquet.yml -g $RG -w $WS
+# 0. on the compute instance terminal (az login --identity already done):
+git clone <repo> ~/lrm-scaling-all-events && cd ~/lrm-scaling-all-events
+git checkout feat/aml-dataprep-pipeline
+
+# 1. STAGE (cosmos -> blob), on the CI:
+bash aml_dataprep/stage_on_ci.sh
+#    -> azureml:lrm-v4-vocab:1, azureml:lrm-v4-seqview:1
+
+# 2. ENCODE (8x A100):
+az ml job create -f aml_dataprep/jobs/2_encode.yml -g wb-aml -w pconv-aml-offline
+
+# 3. TRAIN L800 (8x A100), after encode completes:
+az ml job create -f aml_dataprep/jobs/3_train.yml -g wb-aml -w pconv-aml-offline
 ```
 
-(Jobs are submitted sequentially because 2 and 3 depend on 1's vocab output. A
-future revision can fold these into a single `az ml` *pipeline* with explicit
-data dependencies; kept as 3 command jobs here for transparency / debuggability.)
+## Files
+| File | Role |
+|---|---|
+| `stage_on_ci.sh` | Cosmos→blob staging (vocab+parquet) — runs on the compute instance |
+| `encode_embeddings_multigpu.py` | 8-GPU sharded encoder → `domain_*/shard_0.npy` |
+| `jobs/2_encode.yml` | Encode VC job (8x A100, blob in/out) |
+| `jobs/3_train.yml` | L800 training VC job (8x A100, blob in/out) |
 
-## Determinism / fidelity notes
-- `step1` sorts the shard glob and assigns ids sequentially from `MIN_ITEM_ID=20`,
-  so vocab ids are reproducible.
-- `encode_embeddings_multigpu.py` only parallelizes; each id is encoded by exactly
-  one worker and placed at row `item_id`. `embedding(text)` is a pure function of
-  text + model, so the merged `shard_0.npy` is independent of GPU split.
-- `step3` re-derives `encoded_id = domain*1e9 + item_id` from the same vocab, so
-  parquet ids line up with the embedding rows.
-- `MiniLM` model `paraphrase-multilingual-MiniLM-L12-v2` (emb_dim 384, fp16).
+## Determinism / fidelity
+- step1 sorts shards + assigns ids sequentially → reproducible vocab.
+- encoder only parallelizes; each id encoded once, placed at row `item_id`;
+  `embedding(text)` pure → merged shard independent of GPU split.
+- step3 re-derives `encoded_id = domain*1e9 + item_id` → parquet ids match embeddings.
 
-## Known gaps / TODO
-- **val shards 0,1**: at time of writing cosmos had val 2..39 (38/40). Train is
-  complete (110/110). Re-run Job 1 + Job 3 after the 2 missing val shards land to
-  get the full 40-chunk eval set.
-- Output currently lands on `workspaceblobstore` (fast, in-region). Copy to cosmos
-  later if a durable cosmos copy is wanted.
-- Consider converting to an `az ml` pipeline job for one-shot submission.
+## TODO / notes
+- val shards 0,1 currently missing on cosmos (38/40); train complete (110/110).
+  Re-run stage after they land for the full 40-chunk eval.
+- AMD VCs (Feeds MI300X, ads MI200) would need ROCm port (different torch/image);
+  staying on NVIDIA A100 (no code change).
+- Outputs land on workspaceblobstore (~174 GB); blob accounts hold up to 5 PB, so
+  capacity is a non-issue. Clean up `derived/lrm_v4/` after the run if desired.

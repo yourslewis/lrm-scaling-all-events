@@ -1,39 +1,31 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
 # ---------------------------------------------------------------------------
-# Job 2/3: Encode semantic embeddings on 8x A100 (the heavy step, ~168 GB out).
-# Reads:  vocab from Job 1 (workspace blobstore derived/lrm_v4/vocab_v3)
-# Writes: workspace blobstore  derived/lrm_v4/semantic_embeddings_v3
-#         -> domain_<d>/shard_0.npy  (float16, indexed by item_id)
-# Uses aml_dataprep/encode_embeddings_multigpu.py to shard work across all 8 GPUs.
-# Model: paraphrase-multilingual-MiniLM-L12-v2 (downloaded from HF at runtime).
+# Encode job (8x A100 on ads-shared-nd40). SPLIT-DESIGN: reads vocab from
+# workspaceblobstore (staged by stage_on_ci.sh), writes 168 GB embeddings back
+# to blobstore. Does NOT touch cosmos -> no NoIdentityOnCompute.
+# Submit as the CI MSI / Wenhao (has nd40 submit rights).
 # ---------------------------------------------------------------------------
-display_name: lrm-dataprep-2-encode-8xA100
+display_name: lrm-encode-8xA100
 experiment_name: lrm-dataprep
-
 compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
 resources:
   instance_type: Singularity.ND96rs_v4    # 8x A100-40GB
   instance_count: 1
 queue_settings:
-  job_tier: Standard
-
+  job_tier: Standard                        # 152 dedicated A100 free
 environment:
   image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
-
 code: ..
-
 inputs:
   vocab:
     type: uri_folder
     mode: ro_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4/vocab_v3
-
+    path: azureml:lrm-v4-vocab:1
 outputs:
   embeddings:
     type: uri_folder
     mode: rw_mount
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4/semantic_embeddings_v3
-
 command: >-
   set -e &&
   pip install -q "sentence-transformers==5.4.1" &&
@@ -43,6 +35,5 @@ command: >-
   --output_dir ${{outputs.embeddings}}
   --domains 0,1,2,3,4
   --batch_size 1024 &&
-  echo "=== output tree ===" &&
   du -sh ${{outputs.embeddings}}/domain_* &&
   cat ${{outputs.embeddings}}/embedding_meta.json

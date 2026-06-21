@@ -1,0 +1,46 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ---------------------------------------------------------------------------
+# L800 training (8x A100 on ads-shared-nd40). Reads parquet seqview + semantic
+# embeddings from workspaceblobstore (both produced by earlier stage/encode).
+# Does NOT touch cosmos. Reproduces the frozen L800 run on regenerated data.
+# ---------------------------------------------------------------------------
+display_name: lrm-train-l800-8xA100
+experiment_name: lrm-train
+compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+resources:
+  instance_type: Singularity.ND96rs_v4    # 8x A100-40GB
+  instance_count: 1
+queue_settings:
+  job_tier: Standard
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+code: ..
+inputs:
+  seqview:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml:lrm-v4-seqview:1
+  embeddings:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4/semantic_embeddings_v3
+outputs:
+  output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4/l800_output
+command: >-
+  set -e &&
+  pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true &&
+  nvidia-smi --query-gpu=index,name --format=csv,noheader &&
+  cd proposed_2-mmoe_ple/train &&
+  torchrun --nproc_per_node=8 main.py
+  --gin_config_file=../config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
+  --output_path=${{outputs.output}}
+  --data_path=${{inputs.seqview}}/train
+  --mode=job
+  --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+  --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+  --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+  --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+  --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
