@@ -75,9 +75,11 @@ echo "=== 2. log in as the service account (ROPC; MFA warning is deprecation noi
 az login -u "$AZ_SP_USER" -p "$AZ_SP_PASS" --tenant "$TENANT" --only-show-errors >/dev/null
 WHO="$(az account show --query '{u:user.name,t:user.type}' -o tsv)"
 echo "    identity: $WHO"
+# Enforce BOTH the account name AND user.type==user (tab-separated tsv: '<name>\t<type>').
+# ROPC always yields user-type, so this is a belt-and-suspenders assertion.
 case "$WHO" in
-  *"$AZ_SP_USER"*[Uu]ser*|*"$AZ_SP_USER"*) : ;;
-  *) echo "[err] unexpected identity after login: $WHO (expected $AZ_SP_USER / user)" >&2; exit 5;;
+  *"$AZ_SP_USER"*[Uu]ser*) : ;;
+  *) echo "[err] unexpected identity after login: $WHO (expected '$AZ_SP_USER' + user-type)" >&2; exit 5;;
 esac
 
 [ -n "$SUB" ] && { echo "=== 2b. set subscription $SUB ==="; az account set -s "$SUB"; }
