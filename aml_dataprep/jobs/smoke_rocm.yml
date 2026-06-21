@@ -1,0 +1,42 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ---------------------------------------------------------------------------
+# ROCm/MI 1-GPU SMOKE. Validates: rocm-smi sees the card, torch.version.hip set,
+# device name = MI200/MI300X, bf16 matmul, and the 3 fbgemm jagged ops via the
+# pure-torch shim (zero fbgemm-build risk for this first smoke).
+#
+# Reads NOTHING from cosmos -> no NoIdentityOnCompute. No inputs needed at all.
+# Submit from the CI as msanrrsvcgpt (see docker/rocm/submit_rocm.sh) into a WS
+# the SP can write (CPT-LLM-Pipelines, rg Ads-LLM-Pipelines) targeting the MI VC.
+#
+# THREE fields must be filled before submit (see scoping doc "Open items"):
+#   compute        : raw VC ARM resource id (no azureml:// prefix)
+#   instance_type  : exact Singularity MI SKU (letters transpose vs Azure VM SKU
+#                    -> MUST be pulled off a live MI job, never hand-built)
+#   environment.image : built from docker/rocm/Dockerfile, pushed to the ACR
+# ---------------------------------------------------------------------------
+display_name: lrm-rocm-smoke-1gpu
+experiment_name: lrm-rocm-compat
+
+# <FILL> raw VC ARM id. MI300X -> Feeds VC; MI200 -> ads or Feeds VC.
+#   Feeds: /subscriptions/<CS-NewsAndFeeds-sub>/resourceGroups/rg-cs-newsandfeeds-singularity/providers/Microsoft.MachineLearningServices/virtualClusters/<feedsVC>
+compute: PLACEHOLDER_VC_ARM_RESOURCE_ID
+
+resources:
+  # <FILL> exact MI SKU off a live job (e.g. az ml job show -n ivory_wall ...).
+  # Family only is known: NDMI300Xv5 (MI300X) / NDMI200v4 (MI200). DO NOT guess.
+  instance_type: PLACEHOLDER_Singularity.NDMI300Xv5_SKU
+  instance_count: 1
+
+queue_settings:
+  job_tier: Standard          # Singularity: job_tier, NOT priority
+
+environment:
+  # <FILL> built+pushed from docker/rocm/Dockerfile (rocm/pytorch base).
+  image: PLACEHOLDER_ACR/lrm-rocm:smoke
+
+code: ..
+
+command: >-
+  set -e &&
+  rocm-smi --showproductname &&
+  python docker/rocm/smoke_mi.py

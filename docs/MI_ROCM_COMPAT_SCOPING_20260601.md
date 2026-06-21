@@ -34,7 +34,7 @@ So the gating item is no longer "port torchrec to ROCm." It is: **"get fbgemm_gp
 | **`torchrec==1.1.0`** | dev L242 (×4) | **Drop** — not imported anywhere in code | Low (was the scare) |
 | `faiss-gpu==1.7.2` | L113 (×8) | **Drop or faiss-cpu** — *not imported anywhere in code either* | Low (NEW — not in brief) |
 | `flash-attn` | — | **None present** (grep clean). HSTU uses fbgemm-jagged attention, not flash. | None |
-| autocast `"cuda"` | `hstu.py:485` | string is fine on ROCm; **wire dtype→bf16** for MI300 (CDNA3) | Low |
+| autocast `"cuda"` | `hstu.py:485` | **DO NOT edit** — `"cuda"` is correct on ROCm (HIP keeps the cuda device_type; `"hip"` is an invalid autocast string and throws). bf16 = flip the gin flag instead (see below). | Low |
 | encode `--device cuda:0` | `data_prep/step2_encode_embeddings.py:19` | works as-is; ensure ROCm sentence-transformers/torch in encode image | Low |
 
 ### New risk Rex's brief did NOT flag
@@ -48,6 +48,22 @@ So the gating item is no longer "port torchrec to ROCm." It is: **"get fbgemm_gp
 - **PyTorch 2.9 has ROCm wheel-variant support for ROCm6.3 / 6.4**; ROCm6.2 nightly path also exists. Target a torch that has matching `pytorch-triton-rocm` + fbgemm.
 
 ---
+
+## bf16 wiring — CORRECTED (verified by Rex + re-confirmed in tree)
+The MI300 bf16 switch is **not** an `hstu.py` edit. `main.py` calls `gin.parse_config_file(<single file>)` with **no** `--gin_bindings`, so:
+- `Trainer.main_module_bf16` (default `False`, L800 gin line 41) is the real lever.
+- Plumbed: `train.py:504/529/582/605` → `float_dtype=torch.bfloat16 if main_module_bf16` → HSTU `autocast_dtype` (`hstu.py:460`), consumed by the autocast at `hstu.py:485`.
+- Mechanism: generate a self-contained sibling gin (`..._l800_bf16.gin` = base + `Trainer.main_module_bf16 = True`; gin last-write-wins within one file). Tool: `docker/rocm/gen_bf16_gin.py` (done, generates line 64 override over line 41).
+
+## Branch artifacts added (no-cluster, CUDA path untouched)
+- `docker/rocm/Dockerfile` — `rocm/pytorch` base + `requirements-rocm.txt`; FBGEMM_MODE build arg (shim default → zero build risk for smoke #1).
+- `docker/rocm/requirements-rocm.txt` — generated from the CUDA env, **141 kept / 17 stripped** (nvidia-*×11, faiss-gpu, fbgemm-gpu, torchrec, torch, triton).
+- `docker/rocm/smoke_mi.py` — 2-stage smoke (device/hip/bf16 probe + 3 jagged ops under shim). Shim algorithm validated locally (roundtrip == identity).
+- `docker/rocm/gen_bf16_gin.py` + `bf16_overlay.gin` — bf16 enablement.
+- `aml_dataprep/jobs/smoke_rocm.yml` — 1-GPU Singularity smoke, blobstore-only, 3 PLACEHOLDER fields (compute / instance_type / image).
+
+## Pre-existing gaps noticed (not ROCm-specific)
+- `aml_dataprep/jobs/3_train.yml` `pip install -r proposed_2-mmoe_ple/requirements.txt` — **that file does not exist** (swallowed by `|| true`). Flagging; not fixing on this branch.
 
 ## Proposed image (cleaner than converting conda wholesale)
 - Base: AMD `rocm/pytorch:rocm6.x_ubuntu22.04_py3.10_pytorch_release_2.6.0` (exact tag TBD — confirm on AML).
