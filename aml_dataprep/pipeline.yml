@@ -48,7 +48,7 @@ jobs:
   # ---------- step 1: vocab (nd40 node, big RAM, reads raw from blob) ----------
   vocab:
     type: command
-    compute: azureml:ads-shared-nd40
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
@@ -73,7 +73,7 @@ jobs:
   # ---------- step 2: parquet seqview (nd40 node, reads raw + vocab) -----------
   parquet:
     type: command
-    compute: azureml:ads-shared-nd40
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
@@ -101,7 +101,7 @@ jobs:
   # ---------- step 3: encode semantic embeddings (8x A100) ---------------------
   encode:
     type: command
-    compute: azureml:ads-shared-nd40
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
@@ -128,7 +128,7 @@ jobs:
   # ---------- step 4: L800 training (8x A100) ---------------------------------
   train:
     type: command
-    compute: azureml:ads-shared-nd40
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
