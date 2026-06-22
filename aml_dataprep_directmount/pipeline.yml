@@ -1,0 +1,163 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+# ===========================================================================
+# DIRECT-MOUNT LRM pipeline (CorpNet) — replicates the repo's PME pattern.
+# ---------------------------------------------------------------------------
+# Difference vs aml_dataprep/pipeline.yml (the SPLIT design):
+#   * NO relay step. Cosmos is mounted DIRECTLY into every step that needs raw
+#     shards (vocab, parquet) via `azureml://datastores/<ds>/paths/<root>`,
+#     exactly like the team's train_singularity_pme.ipynb job notebooks.
+#   * No compute instance in the loop. Every step is a Singularity VC job.
+#
+# PRECONDITION (verify first!): run jobs/probe_mount.yml and confirm PASS.
+# If the probe FAILs with NoIdentityOnCompute, this pipeline cannot read cosmos
+# on the VC -> use the split pipeline (aml_dataprep/pipeline.yml) instead.
+#
+# Datastore is a single pipeline input (`cosmos_uri`) so we can flip between:
+#   networkprotection store (repo's proven direct-mount store)   [DEFAULT]
+#   pipelines store          (where wenhlu's data lives today)   [override]
+# Submit examples are in aml_dataprep_directmount/README.md.
+# ===========================================================================
+type: pipeline
+display_name: lrm-l800-directmount-end2end
+experiment_name: lrm-l800-directmount
+description: >-
+  End-to-end LRM L800 on CorpNet with the repo's DIRECT-MOUNT pattern: every
+  Singularity VC step mounts the cosmos ADLS datastore directly (no relay, no
+  compute-instance staging). Toggle the datastore via `cosmos_uri`.
+
+settings:
+  default_compute: azureml:serverless
+  continue_on_step_failure: false
+
+inputs:
+  # ---- cosmos data root, mounted directly into the VC jobs ----------------
+  # DEFAULT = networkprotection store (the store the repo direct-mounts and the
+  # one already registered in CPT-LLM-Pipelines as adls_networkprotection08).
+  # To use the pipelines store instead, override at submit:
+  #   --set inputs.cosmos_uri="azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4"
+  cosmos_uri:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+
+outputs:
+  l800_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_dm/l800_output
+
+# Anchor: the Singularity GPU VC (full ARM id; short name does not resolve).
+# All steps run here. nd40 = A100-40 8-GPU, Standard tier (152 dedicated free).
+jobs:
+
+  # ---------- step 1: vocab (reads cosmos DIRECTLY) ------------------------
+  vocab:
+    type: command
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      raw: ${{parent.inputs.cosmos_uri}}
+    outputs:
+      vocab:
+        type: uri_folder
+        mode: rw_mount
+    command: >-
+      python data_prep/step1_collect_vocab_v2.py
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.vocab}} &&
+      cat ${{outputs.vocab}}/vocab_meta.json
+
+  # ---------- step 2: parquet seqview (reads cosmos DIRECTLY + vocab) ------
+  parquet:
+    type: command
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      raw: ${{parent.inputs.cosmos_uri}}
+      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+    outputs:
+      seqview:
+        type: uri_folder
+        mode: rw_mount
+    command: >-
+      python data_prep/step3_v2.py
+      --vocab_dir ${{inputs.vocab}}
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.seqview}}
+      --mode all_events &&
+      cat ${{outputs.seqview}}/metadata.json
+
+  # ---------- step 3: encode semantic embeddings (8x A100) ----------------
+  # No cosmos here (reads vocab from the previous step's blob output).
+  encode:
+    type: command
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+    outputs:
+      embeddings:
+        type: uri_folder
+        mode: rw_mount
+    command: >-
+      pip install -q "sentence-transformers==5.4.1" &&
+      nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
+      python aml_dataprep/encode_embeddings_multigpu.py
+      --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.embeddings}}
+      --domains 0,1,2,3,4
+      --batch_size 1024
+
+  # ---------- step 4: L800 training (8x A100) -----------------------------
+  train:
+    type: command
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet.outputs.seqview}}
+      embeddings: ${{parent.jobs.encode.outputs.embeddings}}
+    outputs:
+      output: ${{parent.outputs.l800_output}}
+    command: >-
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true &&
+      cd proposed_2-mmoe_ple/train &&
+      torchrun --nproc_per_node=8 main.py
+      --gin_config_file=../config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
+      --output_path=${{outputs.output}}
+      --data_path=${{inputs.seqview}}/train
+      --mode=job
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4

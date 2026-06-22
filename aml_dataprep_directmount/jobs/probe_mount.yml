@@ -1,0 +1,78 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ===========================================================================
+# PROBE: does a Singularity VC node MOUNT cosmos directly on CorpNet?
+# ---------------------------------------------------------------------------
+# This is THE experiment that decides whether we can drop the relay/split.
+# It mirrors the repo's PME pattern (mount the cosmos ADLS datastore straight
+# into the VC job) but runs on CorpNet, submitted as our service account.
+#
+# It is intentionally CHEAP: one node, a few minutes, just ls + head + write a
+# marker. Run this BEFORE any GPU-heavy job. Two outcomes:
+#   PASS  -> the VC node identity can read cosmos -> direct-mount works ->
+#            we can drop the CI relay and use aml_dataprep_directmount/pipeline.yml.
+#   FAIL (ScriptExecution.StreamAccess.Authentication ... NoIdentityOnCompute)
+#         -> direct-mount is blocked on CorpNet for this identity/datastore ->
+#            fall back to the split pipeline (aml_dataprep/pipeline.yml).
+#
+# Submit as msanrrsvcgpt (sole identity). Datastore is overridable at submit:
+#   # default = networkprotection store (repo's proven direct-mount store)
+#   az ml job create -f jobs/probe_mount.yml -g <RG> -w <WS> --subscription <SUB>
+#   # fallback = pipelines store (where the data lives today)
+#   az ml job create -f jobs/probe_mount.yml ... \
+#     --set inputs.cosmos.path="azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4"
+# ===========================================================================
+display_name: lrm-probe-cosmos-mount
+experiment_name: lrm-directmount
+
+# Singularity VC (full ARM id; short name does not resolve). Same AdsSingularity
+# sub as the split pipeline. Using the real GPU VC we intend to train on so the
+# probe tests the EXACT node identity. Swap to a 1-GPU fractional SKU/ads-wb-gpu
+# to spend less while still being a representative Singularity node.
+compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+resources:
+  instance_type: Singularity.ND96rs_v4
+  instance_count: 1
+queue_settings:
+  # job_tier maps to the Singularity slaTier. Standard = non-preemptible.
+  # NOTE: matches the proven split YAMLs (no resources.properties.singularity
+  # block needed in the CLI path; Singularity is inferred from the virtualCluster
+  # compute + Singularity.* instance_type). The repo's SDK notebooks set
+  # resources.properties.singularity explicitly; the CLI infers it.
+  job_tier: Standard
+
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+
+inputs:
+  # The cosmos data, mounted DIRECTLY (no relay). Override .path to switch
+  # datastore (networkprotection <-> pipelines) per the comments above.
+  cosmos:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+
+outputs:
+  marker:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4/probe_mount
+
+command: >-
+  set -e &&
+  echo "=== whoami / identity ===" &&
+  echo "submitted_by=${AZUREML_ARM_SUBSCRIPTION:-?} job=${AZUREML_RUN_ID:-?}" &&
+  echo "=== cosmos mount root ===" &&
+  ls -la ${{inputs.cosmos}} &&
+  echo "=== train dir ===" &&
+  ls -la ${{inputs.cosmos}}/train | head -20 &&
+  echo "train_shards=$(ls ${{inputs.cosmos}}/train/*.tsv 2>/dev/null | wc -l)" &&
+  echo "=== val dir ===" &&
+  ls -la ${{inputs.cosmos}}/val | head -20 &&
+  echo "val_shards=$(ls ${{inputs.cosmos}}/val/*.tsv 2>/dev/null | wc -l)" &&
+  echo "=== head one shard (proves byte-level read, not just listing) ===" &&
+  FIRST=$(ls ${{inputs.cosmos}}/train/*.tsv 2>/dev/null | head -1) &&
+  echo "first_shard=$FIRST" &&
+  head -c 2000 "$FIRST" | tr '\t' '|' | head -3 &&
+  echo "" &&
+  echo "DIRECT_MOUNT_OK" > ${{outputs.marker}}/result.txt &&
+  echo "=== PROBE PASS: VC node mounted + read cosmos directly ==="

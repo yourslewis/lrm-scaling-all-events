@@ -1,0 +1,54 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ===========================================================================
+# Step 1 standalone: DATA-PREP (vocab + parquet) reading cosmos DIRECTLY.
+# ---------------------------------------------------------------------------
+# Combines step1 (vocab) + step3 (parquet seqview) in ONE Singularity VC job
+# that mounts the cosmos ADLS datastore directly (repo's PME pattern, on
+# CorpNet). Both steps need the raw shards, so mounting once is cheapest.
+# Outputs land on workspaceblobstore for the later GPU encode/train jobs.
+#
+# Run jobs/probe_mount.yml FIRST and confirm PASS before this.
+# Submit as msanrrsvcgpt. Toggle datastore via --set inputs.raw.path=...
+# ===========================================================================
+display_name: lrm-dataprep-directmount
+experiment_name: lrm-directmount
+compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+resources:
+  instance_type: Singularity.ND96rs_v4    # 8x A100-40GB (need the RAM for vocab)
+  instance_count: 1
+queue_settings:
+  job_tier: Standard
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+code: ..
+inputs:
+  raw:
+    type: uri_folder
+    mode: ro_mount
+    # DEFAULT networkprotection store; override to bingads_algo_pipelines_c08 if needed.
+    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+outputs:
+  vocab:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_dm/vocab
+  seqview:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_dm/seqview
+command: >-
+  set -e &&
+  echo "=== direct-mount dataprep: cosmos mounted at ${{inputs.raw}} ===" &&
+  ls ${{inputs.raw}}/train/*.tsv | wc -l &&
+  python data_prep/step1_collect_vocab_v2.py
+  --train_dir ${{inputs.raw}}/train
+  --val_dir ${{inputs.raw}}/val
+  --output_dir ${{outputs.vocab}} &&
+  cat ${{outputs.vocab}}/vocab_meta.json &&
+  python data_prep/step3_v2.py
+  --vocab_dir ${{outputs.vocab}}
+  --train_dir ${{inputs.raw}}/train
+  --val_dir ${{inputs.raw}}/val
+  --output_dir ${{outputs.seqview}}
+  --mode all_events &&
+  cat ${{outputs.seqview}}/metadata.json
