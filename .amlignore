@@ -1,0 +1,16 @@
+# AML snapshot ignore — keep the code: .. upload small.
+# Excludes local experiment artifacts / caches not needed by any pipeline step.
+.git
+**/__pycache__/
+**/*.pyc
+# Local TensorBoard runs + checkpoints (700MB+), never read by AML jobs:
+proposed_2-mmoe_ple/train/exps/
+results_v2/
+**/events.out.tfevents.*
+**/*.ckpt
+**/*.pt
+**/*.npy
+**/*.parquet
+# OS cruft
+.DS_Store
+**/.DS_Store
