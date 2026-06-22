@@ -1,0 +1,26 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+# ---------------------------------------------------------------------------
+# AML environment for the ROCm/MI smoke. Built by `az ml environment create`
+# on AML's side (no local docker needed) from docker/rocm/Dockerfile, pushed to
+# the workspace ACR automatically. Yields a named ref: azureml:lrm-rocm-smoke:1
+# (or whatever :version AML assigns) — THAT ref is what goes into smoke_rocm.yml's
+# scalar `environment:` field, replacing the PLACEHOLDER.
+#
+# CRITICAL: build context MUST be the repo root (build.path: ../..), because the
+# Dockerfile does `COPY docker/rocm/requirements-rocm.txt`. dockerfile_path is
+# relative to that context. Building with context=docker/rocm/ will FAIL the COPY.
+#
+# Create from repo root:
+#   az ml environment create -f docker/rocm/aml_env_rocm.yml \
+#     -g wb-aml -w pconv-aml-offline \
+#     --subscription 72a0fe10-0a76-4898-9b7b-640e6e236fdc --only-show-errors
+# (ws/rg/sub here are the validated CI workspace; retarget if Lewis builds elsewhere.)
+# ---------------------------------------------------------------------------
+name: lrm-rocm-smoke
+description: >-
+  ROCm/MI (gfx90a MI200 / gfx942 MI300X) image for the LRM-HSTU smoke. rocm/pytorch
+  base + requirements-rocm.txt app layer. fbgemm via shim (FBGEMM_MODE=shim default),
+  so smoke #1 has zero fbgemm-build risk. Parallel to the CUDA path; A/B only.
+build:
+  path: ../..                       # repo root = build context (COPY needs it)
+  dockerfile_path: docker/rocm/Dockerfile
