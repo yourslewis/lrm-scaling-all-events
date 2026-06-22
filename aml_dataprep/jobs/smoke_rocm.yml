@@ -5,34 +5,39 @@ $schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
 # pure-torch shim (zero fbgemm-build risk for this first smoke).
 #
 # Reads NOTHING from cosmos -> no NoIdentityOnCompute. No inputs needed at all.
-# Submit from the CI as msanrrsvcgpt (see docker/rocm/submit_rocm.sh) into a WS
-# the SP can write (CPT-LLM-Pipelines, rg Ads-LLM-Pipelines) targeting the MI VC.
+# Submit from the CI as the CI-MSI (ClickPrediction-Trainer systemAssignedIdentity)
+# from pconv-aml-offline (rg wb-aml) targeting the ads VC -- the proven calm_sun
+# route. No SP, no cross-sub policy gate for this cosmos-free smoke.
+# NOTE: docker/rocm/submit_rocm.sh logs in as the SP and defaults to
+# CPT-LLM-Pipelines; for THIS route submit under the active CI-MSI instead
+# (az login --identity; az ml job create -f <this> -g wb-aml -w pconv-aml-offline).
 #
-# THREE fields must be filled before submit (see scoping doc "Open items"):
-#   compute        : raw VC ARM resource id (no azureml:// prefix)
-#   instance_type  : exact Singularity MI SKU (letters transpose vs Azure VM SKU
-#                    -> MUST be pulled off a live MI job, never hand-built)
-#   environment.image : built from docker/rocm/Dockerfile, pushed to the ACR
+# All 3 fields filled (folded in after Lewis confirmed the MI200 family SKU):
+#   compute        : raw VC ARM resource id (no azureml:// prefix) -> ads VC
+#   instance_type  : Singularity MI200 SKU (canonical family name; if a finer
+#                    node-level string is required it free-rejects at scheduling
+#                    with ZERO allocation, and we adjust -- no paid misfire)
+#   environment    : named AML env azureml:lrm-rocm-smoke:1 (built AML/ACR-side)
 # ---------------------------------------------------------------------------
 display_name: lrm-rocm-smoke-1gpu
 experiment_name: lrm-rocm-compat
 
-# <FILL> raw VC ARM id. MI300X -> Feeds VC; MI200 -> ads or Feeds VC.
-#   Feeds: /subscriptions/<CS-NewsAndFeeds-sub>/resourceGroups/rg-cs-newsandfeeds-singularity/providers/Microsoft.MachineLearningServices/virtualClusters/<feedsVC>
-compute: PLACEHOLDER_VC_ARM_RESOURCE_ID
+# ads VC (sub 72a1fe05 AdsSingularity / rg ads-singularity-rg-01). MI200 family
+# (NDMI200v4) confirmed present via ARM quota. CI-MSI submit here is proven (calm_sun).
+compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/ads-singularity-rg-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads
 
 resources:
-  # <FILL> exact MI SKU off a live job (e.g. az ml job show -n ivory_wall ...).
-  # Family only is known: NDMI300Xv5 (MI300X) / NDMI200v4 (MI200). DO NOT guess.
-  instance_type: PLACEHOLDER_Singularity.NDMI300Xv5_SKU
+  # MI200 family SKU confirmed by Lewis (ARM quota series NDMI200v4, Premium tier
+  # in-use). Singularity free-rejects an unschedulable string at placement (zero
+  # cost), so if a node-level suffix is required this errors cleanly and we adjust.
+  instance_type: Singularity.NDMI200v4
   instance_count: 1
 
 queue_settings:
   job_tier: Standard          # Singularity: job_tier, NOT priority
 
-environment:
-  # <FILL> built+pushed from docker/rocm/Dockerfile (rocm/pytorch base).
-  image: PLACEHOLDER_ACR/lrm-rocm:smoke
+# Named AML env (built on AML/ACR side from docker/rocm/Dockerfile; rocm/pytorch base).
+environment: azureml:lrm-rocm-smoke:1
 
 code: ..
 
