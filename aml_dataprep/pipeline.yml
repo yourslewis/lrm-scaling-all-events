@@ -29,10 +29,9 @@ jobs:
   # Singularity VC nodes CANNOT read cosmos, so the relay cannot run on nd40.
   relay:
     type: command
+    display_name: relay-cosmos-to-blob
     compute: azureml:lrm-smoke-submitter        # compute instance w/ cosmos-capable MSI
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
-      conda_file: ./env_relay.yml
+    environment: azureml:lrm-relay-env:1
     code: ..
     inputs:
       data_version: ${{parent.inputs.data_version}}
@@ -48,14 +47,14 @@ jobs:
   # ---------- step 1: vocab (nd40 node, big RAM, reads raw from blob) ----------
   vocab:
     type: command
+    display_name: vocab-step1
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
     queue_settings:
       job_tier: Standard
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       raw: ${{parent.jobs.relay.outputs.raw}}
@@ -73,14 +72,14 @@ jobs:
   # ---------- step 2: parquet seqview (nd40 node, reads raw + vocab) -----------
   parquet:
     type: command
+    display_name: parquet-step3
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
     queue_settings:
       job_tier: Standard
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       raw: ${{parent.jobs.relay.outputs.raw}}
@@ -101,14 +100,14 @@ jobs:
   # ---------- step 3: encode semantic embeddings (8x A100) ---------------------
   encode:
     type: command
+    display_name: encode-8xA100
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
     queue_settings:
       job_tier: Standard
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       vocab: ${{parent.jobs.vocab.outputs.vocab}}
@@ -128,14 +127,14 @@ jobs:
   # ---------- step 4: L800 training (8x A100) ---------------------------------
   train:
     type: command
+    display_name: train-l800-8xA100
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
       instance_count: 1
     queue_settings:
       job_tier: Standard
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       seqview: ${{parent.jobs.parquet.outputs.seqview}}
