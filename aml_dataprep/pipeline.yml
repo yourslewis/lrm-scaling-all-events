@@ -31,7 +31,7 @@ jobs:
     type: command
     display_name: relay-cosmos-to-blob
     compute: azureml:lrm-smoke-submitter        # compute instance w/ cosmos-capable MSI
-    environment: azureml:lrm-relay-env:1
+    environment: azureml:lrm-relay-env:2
     code: ..
     inputs:
       data_version: ${{parent.inputs.data_version}}

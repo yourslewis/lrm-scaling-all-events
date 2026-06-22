@@ -4,8 +4,7 @@ channels:
 dependencies:
   - python=3.10
   - pip
-  - setuptools
   - pip:
-      - setuptools
+      - "setuptools<81"
       - azureml-fsspec
       - azure-ai-ml
