@@ -49,7 +49,10 @@ inputs:
   cosmos:
     type: uri_folder
     mode: ro_mount
-    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+    # adls_networkprotection08 = the networkprotection store's name in CPT-LLM-Pipelines
+    # (proven: probe Completed as msanrrsvcgpt). repo's PME ws calls it
+    # bingads_algo_prod_networkprotection_c08. Confirm via `az ml datastore list`.
+    path: azureml://datastores/adls_networkprotection08/paths/local/User/wenhlu/LRM_benchmark_v4
 
 outputs:
   marker:

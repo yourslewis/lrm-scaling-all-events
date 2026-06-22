@@ -31,14 +31,19 @@ settings:
 
 inputs:
   # ---- cosmos data root, mounted directly into the VC jobs ----------------
-  # DEFAULT = networkprotection store (the store the repo direct-mounts and the
-  # one already registered in CPT-LLM-Pipelines as adls_networkprotection08).
+  # DEFAULT = networkprotection store. NOTE: the DATASTORE NAME is workspace-
+  # specific for the SAME underlying cosmos store:
+  #   * CPT-LLM-Pipelines (our CorpNet target):  adls_networkprotection08   <-- used here
+  #   * repo's PME workspace:                    bingads_algo_prod_networkprotection_c08
+  # PROVEN: msanrrsvcgpt direct-mounted adls_networkprotection08 OK
+  # (probe dynamic_soursop_cxtgrfgpfz, Completed). Verify the name in YOUR target
+  # workspace with `az ml datastore list` before submitting elsewhere.
   # To use the pipelines store instead, override at submit:
   #   --set inputs.cosmos_uri="azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4"
   cosmos_uri:
     type: uri_folder
     mode: ro_mount
-    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+    path: azureml://datastores/adls_networkprotection08/paths/local/User/wenhlu/LRM_benchmark_v4
 
 outputs:
   l800_output:

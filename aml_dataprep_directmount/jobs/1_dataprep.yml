@@ -25,8 +25,11 @@ inputs:
   raw:
     type: uri_folder
     mode: ro_mount
-    # DEFAULT networkprotection store; override to bingads_algo_pipelines_c08 if needed.
-    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+    # DEFAULT networkprotection store in CPT-LLM-Pipelines = adls_networkprotection08
+    # (proven direct-mountable by msanrrsvcgpt). In the repo's PME ws the same store
+    # is named bingads_algo_prod_networkprotection_c08. Override to
+    # bingads_algo_pipelines_c08 for the pipelines store if needed.
+    path: azureml://datastores/adls_networkprotection08/paths/local/User/wenhlu/LRM_benchmark_v4
 outputs:
   vocab:
     type: uri_folder

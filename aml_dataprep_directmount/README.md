@@ -9,6 +9,19 @@ staging.**
 This is the alternative to the SPLIT design in `../aml_dataprep/`. Use whichever
 the access reality allows (see the decision gate below).
 
+## STATUS (2026-06-22): direct cosmos mount PROVEN; blocked only by GPU-VC RBAC
+- :white_check_mark: **Cosmos direct-mount WORKS as `msanrrsvcgpt`.** Probe job
+  `dynamic_soursop_cxtgrfgpfz` (workspace CPT-LLM-Pipelines) ran under `set -e`,
+  mounted `adls_networkprotection08` `ro_mount`, listed train/val shards + `head`-ed
+  a real `.tsv`, and finished **Completed / error=null**. The cosmos-access wall the
+  split design was built to dodge is solved for direct-mount.
+- :x: **`msanrrsvcgpt` lacks `jobs submit` on the `ads-shared-nd40` Singularity GPU VC**
+  (`UserError: User identity does not have jobs submit permission on the virtual
+  cluster`). The probe was proven on the workspace's managed CPU cluster
+  (`CPT-LLM-Pipelines-Compute`) instead. **To run the GPU pipeline below, the SP
+  needs a Submitter role-assignment on nd40 (or another A100 VC).** That single
+  RBAC grant is the only remaining blocker.
+
 ## Why a second pipeline
 The repo's tested jobs prove a Singularity VC job **can** read cosmos when the
 datastore + submitting identity are wired the PME way — input is just
@@ -29,20 +42,24 @@ may just work — and we delete the relay entirely.
   direct-mounts. That makes it the natural target workspace.
 
 ## Datastore toggle (the fallback Wenhao asked for)
-Single knob, overridable at submit time:
+Single knob, overridable at submit time. **The datastore NAME is workspace-specific
+for the same underlying cosmos store** — confirm with `az ml datastore list`:
 
-| Store | Datastore name | Use when |
+| Store | Datastore name (CPT-LLM-Pipelines) | Use when |
 |---|---|---|
-| **networkprotection** (DEFAULT) | `bingads_algo_prod_networkprotection_c08` | repo's proven direct-mount store; Wenhao can place the data here |
-| pipelines | `bingads_algo_pipelines_c08` | where `wenhlu/LRM_benchmark_v4` lives today |
+| **networkprotection** (DEFAULT) | `adls_networkprotection08` | proven direct-mountable by the SP; data staged here |
+| pipelines | `bingads_algo_pipelines_c08` | where `wenhlu/LRM_benchmark_v4` also lives |
+
+> Name mapping gotcha: the repo's PME workspace calls the networkprotection store
+> `bingads_algo_prod_networkprotection_c08`; in **CPT-LLM-Pipelines** the same store
+> is `adls_networkprotection08`. The YAML defaults now use the CPT name.
 
 Override example (flip to pipelines store):
 ```bash
 --set inputs.cosmos_uri="azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4"
 ```
-> If `msanrrsvcgpt` cannot read `bingads_algo_pipelines_c08`, Wenhao offered to
-> also place the data under `bingads_algo_prod_networkprotection_c08` — then the
-> DEFAULT path works unchanged.
+> Data is staged at the same relative root under both stores
+> (`local/User/wenhlu/LRM_benchmark_v4`), so only the datastore name changes.
 
 ## Run order
 Set your target once (a workspace where the chosen datastore is registered AND
