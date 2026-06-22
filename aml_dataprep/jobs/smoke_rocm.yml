@@ -27,10 +27,14 @@ experiment_name: lrm-rocm-compat
 compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/ads-singularity-rg-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads
 
 resources:
-  # MI200 family SKU confirmed by Lewis (ARM quota series NDMI200v4, Premium tier
-  # in-use). Singularity free-rejects an unschedulable string at placement (zero
-  # cost), so if a node-level suffix is required this errors cleanly and we adjust.
-  instance_type: Singularity.NDMI200v4
+  # MI200 node-level SKU candidate. Evidence: a live job on this VC's workspace
+  # (ads-singularity-ws01-eastus) runs Singularity.ND96isr_MI300X_v5 -> confirms
+  # the node-level template ND96isr_<GPU>_v<N>. Bare family 'NDMI200v4' free-
+  # rejected at placement (zero logs = no container = no cost), exactly because it
+  # lacked the node prefix + infix. This pattern-matches the confirmed MI300X SKU
+  # with the MI200 infix + v4 (per quota family). If it also free-rejects, the node
+  # prefix differs for MI200 and we read the literal off a live MI200 job.
+  instance_type: Singularity.ND96isr_MI200_v4
   instance_count: 1
 
 queue_settings:
