@@ -8,8 +8,9 @@ WS=msan-retrieval-ranking-aml
 case "${1:-probe}" in
   probe) YML=aml_dataprep_msan/jobs/probe_np_read.yml ;;
   mount) YML=aml_dataprep_msan/jobs/probe_mount.yml ;;
+  idpass) YML=aml_dataprep_msan/jobs/probe_idpass.yml ;;
   vocab) YML=aml_dataprep_msan/jobs/vocab_msan.yml ;;
-  *) echo "usage: submit.sh probe|mount|vocab"; exit 2 ;;
+  *) echo "usage: submit.sh probe|mount|idpass|vocab"; exit 2 ;;
 esac
 echo "=== submitting $YML ==="
 az ml job create -f "$YML" -g "$RG" -w "$WS" --subscription "$SUB" -o json > /tmp/job.json 2>/tmp/job.err
