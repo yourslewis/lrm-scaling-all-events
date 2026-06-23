@@ -23,6 +23,9 @@ $schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
 display_name: lrm-msan-vocab-cpu
 experiment_name: lrm-msan-dataprep
 compute: azureml:computed15v2          # D15_v2 = 20 cores / 140 GB RAM / 1000 GB disk, no preemption
+identity:
+  type: user_identity                  # read networkprotection as the SUBMITTER (WL owns the data path);
+                                       # datastore stored-cred is empty, so passthrough is required (proven by probe lime_zoo_bd155h2m1k PASS)
 environment:
   image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
   conda_file:
