@@ -36,7 +36,7 @@ outputs:
   l800_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan/l800_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/l800_output
 
 jobs:
 
@@ -66,7 +66,7 @@ jobs:
       raw:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan/raw
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/raw
     command: >-
       python aml_dataprep/relay_shards.py
       --data_version ${{inputs.data_version}}
@@ -99,12 +99,17 @@ jobs:
       vocab:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan/vocab
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
     command: >-
-      python data_prep/step1_collect_vocab_v2.py
+      SPILL=$(mktemp -d) &&
+      python data_prep/step1_collect_vocab_v3.py
       --train_dir ${{inputs.raw}}/train
       --val_dir ${{inputs.raw}}/val
-      --output_dir ${{outputs.vocab}} &&
+      --output_dir ${{outputs.vocab}}
+      --num_buckets 512
+      --max_open_handles 128
+      --spill_dir "$SPILL"
+      --no_monolithic &&
       cat ${{outputs.vocab}}/vocab_meta.json
 
   # ---------- step 2: parquet seqview (CPU, reads raw + vocab) -----------------
@@ -133,14 +138,15 @@ jobs:
       seqview:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan/seqview
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/seqview
     command: >-
-      python data_prep/step3_v2.py
+      python data_prep/step3_v3.py
       --vocab_dir ${{inputs.vocab}}
       --train_dir ${{inputs.raw}}/train
       --val_dir ${{inputs.raw}}/val
       --output_dir ${{outputs.seqview}}
-      --mode all_events &&
+      --mode all_events
+      --bucket_cache_size 64 &&
       cat ${{outputs.seqview}}/metadata.json
 
   # ---------- step 3: encode semantic embeddings (8x A100, nd40) ---------------
@@ -162,11 +168,11 @@ jobs:
       embeddings:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan/embeddings
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/embeddings
     command: >-
       pip install -q "sentence-transformers==5.4.1" &&
       nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
-      python aml_dataprep/encode_embeddings_multigpu.py
+      python aml_dataprep/encode_embeddings_multigpu_v3.py
       --vocab_dir ${{inputs.vocab}}
       --output_dir ${{outputs.embeddings}}
       --domains 0,1,2,3,4
