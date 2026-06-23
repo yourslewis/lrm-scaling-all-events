@@ -6,6 +6,11 @@ SUB=f920ee3b-6bdc-48c6-a487-9e0397b69322
 RG=msan-aml; WS=msan-retrieval-ranking-aml
 PARENT=gifted_square_7vj803x572
 
+# cd into this script's own repo so git add/push targets the right tree
+SELFDIR=$(cd "$(dirname "$0")/../.." && pwd)
+cd "$SELFDIR" || { echo "NO_REPO_DIR"; exit 1; }
+echo "REPO=$SELFDIR"
+
 VID=$(az ml job list --parent-job-name $PARENT -g $RG -w $WS --subscription $SUB \
   --query "[?display_name=='vocab'].name | [0]" -o tsv 2>/dev/null)
 echo "VOCAB_RUN=$VID"
