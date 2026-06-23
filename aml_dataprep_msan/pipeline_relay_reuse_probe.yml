@@ -1,0 +1,53 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+# Minimal probe to test Azure ML step reuse for the relay stage.
+type: pipeline
+display_name: lrm-l800-msan-relay-reuse-probe
+experiment_name: lrm-l800-msan
+
+description: >-
+  Minimal relay-only probe to test whether Azure ML reuses the existing relay
+  output when inputs/settings are unchanged.
+
+settings:
+  default_compute: azureml:computed15v2
+  continue_on_step_failure: false
+
+inputs:
+  data_version: "v1-20260622"
+
+jobs:
+  relay:
+    type: command
+    display_name: relay-cosmos-to-blob
+    compute: azureml:computed15v2
+    identity:
+      type: user_identity
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: relay-cpu
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+              - azureml-fsspec
+              - azure-ai-ml
+    code: ..
+    inputs:
+      data_version: ${{parent.inputs.data_version}}
+    outputs:
+      raw:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/raw
+    command: >-
+      python aml_dataprep/relay_shards.py
+      --data_version ${{inputs.data_version}}
+      --cosmos_sub f920ee3b-6bdc-48c6-a487-9e0397b69322
+      --cosmos_rg msan-aml
+      --cosmos_ws msan-retrieval-ranking-aml
+      --cosmos_datastore bingads_algo_prod_networkprotection_c08
+      --cosmos_root local/User/wenhlu/LRM_benchmark_v4
+      --output_dir ${{outputs.raw}}
