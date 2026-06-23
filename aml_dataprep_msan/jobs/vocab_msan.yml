@@ -35,7 +35,7 @@ environment:
           - "setuptools<81"
           - azureml-fsspec
           - azure-ai-ml
-code: ..
+code: ../..
 inputs:
   data_version: "v1-20260622"          # cache-bust token (bump to force re-run)
 outputs:

@@ -31,6 +31,6 @@ environment:
           - "setuptools<81"
           - azureml-fsspec
           - azure-ai-ml
-code: ..
+code: ../..
 command: >-
   python aml_dataprep_msan/list_np.py
