@@ -197,7 +197,7 @@ jobs:
     outputs:
       output: ${{parent.outputs.l800_output}}
     command: >-
-      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true &&
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt &&
       cd proposed_2-mmoe_ple/train &&
       torchrun --nproc_per_node=8 main.py
       --gin_config_file=../config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
