@@ -1,30 +1,13 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
-# ===========================================================================
-# FULL end-to-end LRM-L800 pipeline on msan-retrieval-ranking-aml.
-# ---------------------------------------------------------------------------
-# Adapted from the source aml_dataprep/pipeline.yml (lrm-l800-end2end), per
-# Lewis's design:
-#   * CPU data-prep (relay -> vocab -> parquet) runs on computed15v2 (D15_v2,
-#     20c/140GB, non-preemptible), reading the networkprotection cosmos store via
-#     user_identity passthrough (datastore stored-cred is empty; submitter token
-#     is used). PROVEN by probe lime_zoo_bd155h2m1k (NP_READ_OK train=110 val=40).
-#   * GPU steps (encode 8xA100, train L800) run as Singularity VC jobs on
-#     ads-shared-nd40 (same tenant 72f988bf), reading vocab/seqview/embeddings
-#     from msan workspaceblobstore (never touch cosmos).
-#
-# SUBMIT AS WL (wenhlu) — owns the local/User/wenhlu/... data path:
-#   az ml job create -f aml_dataprep_msan/pipeline.yml \
-#     -g msan-aml -w msan-retrieval-ranking-aml \
-#     --subscription f920ee3b-6bdc-48c6-a487-9e0397b69322
-# (or: bash aml_dataprep_msan/submit.sh pipeline)
-# ===========================================================================
+# Resume after helpful_car_t8j2k5fk9k completed vocab and failed submitting encode.
+# CPU parquet still uses user_identity to read msan workspaceblobstore mounts.
+# Singularity VC steps must not set user_identity: Aisc rejects it at submit time.
 type: pipeline
-display_name: lrm-l800-msan-end2end-reuse-relay
+display_name: lrm-l800-msan-end2end-reuse-vocab
 experiment_name: lrm-l800-msan
 description: >-
-  LRM-L800 reproduction on msan, reusing the completed relay output from
-  sharp_plastic_6clcgqkkqm; CPU vocab/parquet on computed15v2; GPU encode/train
-  on ads-shared-nd40 from blob.
+  LRM-L800 msan resume using completed raw and vocab outputs from
+  helpful_car_t8j2k5fk9k; starts at parquet plus encode, then train.
 
 settings:
   default_compute: azureml:computed15v2
@@ -34,8 +17,11 @@ inputs:
   raw_data:
     type: uri_folder
     mode: ro_mount
-    # Reuse relay output produced by failed parent sharp_plastic_6clcgqkkqm / relay bd18af86-e541-47f9-9e86-ef2c25e740f6
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/raw
+  vocab_data:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
 
 outputs:
   l800_output:
@@ -44,45 +30,6 @@ outputs:
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/l800_output
 
 jobs:
-
-  # ---------- step 1: vocab (CPU, reuses completed relay raw from blob) ---------
-  vocab:
-    type: command
-    display_name: vocab-step1
-    compute: azureml:computed15v2
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
-      conda_file:
-        name: vocab-cpu
-        channels: [conda-forge]
-        dependencies:
-          - python=3.10
-          - pip
-          - pip:
-              - "setuptools<81"
-    code: ..
-    identity:
-      type: user_identity
-    inputs:
-      raw: ${{parent.inputs.raw_data}}
-    outputs:
-      vocab:
-        type: uri_folder
-        mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
-    command: >-
-      SPILL=$(mktemp -d) &&
-      python data_prep/step1_collect_vocab_v3.py
-      --train_dir ${{inputs.raw}}/train
-      --val_dir ${{inputs.raw}}/val
-      --output_dir ${{outputs.vocab}}
-      --num_buckets 512
-      --max_open_handles 128
-      --spill_dir "$SPILL"
-      --no_monolithic &&
-      cat ${{outputs.vocab}}/vocab_meta.json
-
-  # ---------- step 2: parquet seqview (CPU, reads raw + vocab) -----------------
   parquet:
     type: command
     display_name: parquet-step3
@@ -105,7 +52,7 @@ jobs:
     code: ..
     inputs:
       raw: ${{parent.inputs.raw_data}}
-      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+      vocab: ${{parent.inputs.vocab_data}}
     outputs:
       seqview:
         type: uri_folder
@@ -121,7 +68,6 @@ jobs:
       --bucket_cache_size 64 &&
       cat ${{outputs.seqview}}/metadata.json
 
-  # ---------- step 3: encode semantic embeddings (8x A100, nd40) ---------------
   encode:
     type: command
     display_name: encode-8xA100
@@ -135,7 +81,7 @@ jobs:
       image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
     code: ..
     inputs:
-      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+      vocab: ${{parent.inputs.vocab_data}}
     outputs:
       embeddings:
         type: uri_folder
@@ -150,7 +96,6 @@ jobs:
       --domains 0,1,2,3,4
       --batch_size 1024
 
-  # ---------- step 4: L800 training (8x A100, nd40) ---------------------------
   train:
     type: command
     display_name: train-l800-8xA100
