@@ -20,7 +20,7 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  data_version: "v3-20260624-pconv-cpu-prep-linux-ds11"
+  data_version: "v3-20260624-pconv-cpu-prep-subproc-relay"
 
 outputs:
   raw_data:
