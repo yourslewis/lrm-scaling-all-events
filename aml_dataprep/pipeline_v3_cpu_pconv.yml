@@ -37,14 +37,14 @@ jobs:
     type: command
     display_name: cosmos-relay-step0
     compute: azureml:lrm-smoke-submitter
-    environment: azureml:lrm-dataprep-env:1
+    environment: azureml:lrm-relay-env:2
     code: ..
     inputs:
       data_version: ${{parent.inputs.data_version}}
     outputs:
       raw: ${{parent.outputs.raw_data}}
     command: >-
-      python data_prep/cosmos_relay.py
+      python aml_dataprep/relay_shards.py
       --data_version ${{inputs.data_version}}
       --output_dir ${{outputs.raw}}
 
