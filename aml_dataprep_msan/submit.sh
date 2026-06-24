@@ -10,9 +10,10 @@ case "${1:-probe}" in
   mount) YML=aml_dataprep_msan/jobs/probe_mount.yml ;;
   idpass) YML=aml_dataprep_msan/jobs/probe_idpass.yml ;;
   vocab) YML=aml_dataprep_msan/jobs/vocab_msan.yml ;;
+  encode) YML=aml_dataprep_msan/jobs/encode_from_vocab.yml ;;
   pipeline) YML=aml_dataprep_msan/pipeline.yml ;;
   reuse-vocab) YML=aml_dataprep_msan/pipeline_reuse_vocab.yml ;;
-  *) echo "usage: submit.sh probe|mount|idpass|vocab|pipeline|reuse-vocab"; exit 2 ;;
+  *) echo "usage: submit.sh probe|mount|idpass|vocab|encode|pipeline|reuse-vocab"; exit 2 ;;
 esac
 echo "=== submitting $YML ==="
 az ml job create -f "$YML" -g "$RG" -w "$WS" --subscription "$SUB" -o json > /tmp/job.json 2>/tmp/job.err

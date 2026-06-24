@@ -1,0 +1,32 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# Encode only: reuse completed vocab output from helpful_car_t8j2k5fk9k.
+# Singularity/Aisc VC rejects user_identity jobs, so do not set identity here.
+display_name: lrm-l800-msan-encode-from-vocab
+experiment_name: lrm-l800-msan
+compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+resources:
+  instance_type: Singularity.ND96rs_v4
+  instance_count: 1
+queue_settings:
+  job_tier: Standard
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+code: ../..
+inputs:
+  vocab:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
+outputs:
+  embeddings:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/embeddings
+command: >-
+  pip install -q "sentence-transformers==5.4.1" &&
+  nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
+  python aml_dataprep/encode_embeddings_multigpu_v3.py
+  --vocab_dir ${{inputs.vocab}}
+  --output_dir ${{outputs.embeddings}}
+  --domains 0,1,2,3,4
+  --batch_size 1024
