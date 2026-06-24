@@ -1,12 +1,10 @@
 $schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
 # Encode only: reuse completed vocab output from helpful_car_t8j2k5fk9k.
-# Singularity/Aisc VC rejects user_identity jobs, but needs managed_identity
-# so AML can auth datastore/code artifacts without account-key credentials.
+# Singularity/Aisc VC rejects user_identity jobs. It also requires
+# workspaceblobstore to have account-key auth enabled; see aka.ms/singularity-auth.
 display_name: lrm-l800-msan-encode-from-vocab
 experiment_name: lrm-l800-msan
 compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
-identity:
-  type: managed
 resources:
   instance_type: Singularity.ND96rs_v4
   instance_count: 1
