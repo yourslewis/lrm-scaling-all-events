@@ -11,7 +11,7 @@ type: pipeline
 display_name: lrm-l800-pconv-v3-cpu-prep-end2end
 experiment_name: lrm-l800-pipeline
 description: >-
-  LRM-L800 pconv run: relay on pconv AmlCompute with user-identity passthrough,
+  LRM-L800 pconv run: relay on pconv larger-memory AmlCompute with user-identity passthrough,
   CPU vocab/parquet on WIN-E32aV4 using v3 bounded vocab, GPU encode/train on
   ads-shared-nd40.
 
@@ -20,7 +20,7 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  data_version: "v3-20260624-pconv-cpu-prep"
+  data_version: "v3-20260624-pconv-cpu-prep-relay-e8"
 
 outputs:
   raw_data:
@@ -38,9 +38,10 @@ jobs:
     type: command
     display_name: cosmos-relay-step0
     # Avoid compute-instance lifecycle dependency (cjpvm/lrm-smoke-submitter must
-    # be manually started). CPU-D2ADSV4 is an autoscaling AmlCompute cluster; the
-    # data read uses the submitter's AAD token via user_identity passthrough.
-    compute: azureml:CPU-D2ADSV4
+    # be manually started). Use a larger-memory autoscaling AmlCompute node for
+    # the relay; the data read uses the submitter's AAD token via user_identity
+    # passthrough. D2 nodes OOMed while relaying the 110-shard train split.
+    compute: azureml:WIN-E8aV4
     identity:
       type: user_identity
     environment: azureml:lrm-relay-env:2
