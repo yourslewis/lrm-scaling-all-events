@@ -11,8 +11,8 @@ type: pipeline
 display_name: lrm-l800-pconv-v3-cpu-prep-end2end
 experiment_name: lrm-l800-pipeline
 description: >-
-  LRM-L800 pconv run: relay on pconv larger-memory AmlCompute with user-identity passthrough,
-  CPU vocab/parquet on WIN-E32aV4 using v3 bounded vocab, GPU encode/train on
+  LRM-L800 pconv run: relay/vocab/parquet on Linux CPU AmlCompute with user-identity passthrough,
+  avoiding Windows-backed WIN-* clusters for Linux AML images using v3 bounded vocab, GPU encode/train on
   ads-shared-nd40.
 
 settings:
@@ -20,7 +20,7 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  data_version: "v3-20260624-pconv-cpu-prep-relay-e8"
+  data_version: "v3-20260624-pconv-cpu-prep-linux-ds11"
 
 outputs:
   raw_data:
@@ -38,10 +38,11 @@ jobs:
     type: command
     display_name: cosmos-relay-step0
     # Avoid compute-instance lifecycle dependency (cjpvm/lrm-smoke-submitter must
-    # be manually started). Use a larger-memory autoscaling AmlCompute node for
-    # the relay; the data read uses the submitter's AAD token via user_identity
-    # passthrough. D2 nodes OOMed while relaying the 110-shard train split.
-    compute: azureml:WIN-E8aV4
+    # be manually started). Use a Linux AmlCompute cluster: WIN-* clusters are
+    # Windows-backed and cannot pull our Linux AML image. CPU-D2ADSV4 OOMed
+    # while relaying the 110-shard train split; CPU-ECONVDDA has larger DS11_v2
+    # nodes and is Linux-backed.
+    compute: azureml:CPU-ECONVDDA
     identity:
       type: user_identity
     environment: azureml:lrm-relay-env:2
@@ -59,7 +60,7 @@ jobs:
   vocab:
     type: command
     display_name: vocab-step1-v3-cpu
-    compute: azureml:WIN-E32aV4
+    compute: azureml:CPU-ECONVDDA
     environment:
       image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
       conda_file:
@@ -94,7 +95,7 @@ jobs:
   parquet:
     type: command
     display_name: parquet-step3-v3-cpu
-    compute: azureml:WIN-E32aV4
+    compute: azureml:CPU-ECONVDDA
     environment:
       image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
       conda_file:
