@@ -11,8 +11,9 @@ type: pipeline
 display_name: lrm-l800-pconv-v3-cpu-prep-end2end
 experiment_name: lrm-l800-pipeline
 description: >-
-  LRM-L800 pconv run: relay on pconv submitter, CPU vocab/parquet on WIN-E32aV4
-  using v3 bounded vocab, GPU encode/train on ads-shared-nd40.
+  LRM-L800 pconv run: relay on pconv AmlCompute with user-identity passthrough,
+  CPU vocab/parquet on WIN-E32aV4 using v3 bounded vocab, GPU encode/train on
+  ads-shared-nd40.
 
 settings:
   default_compute: azureml:CPU-D2ADSV4
@@ -32,11 +33,16 @@ outputs:
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/l800_output
 
 jobs:
-  # ---------- step 0: relay cosmos -> workspace blob (pconv proven submitter) ---
+  # ---------- step 0: relay cosmos -> workspace blob --------------------------
   relay:
     type: command
     display_name: cosmos-relay-step0
-    compute: azureml:lrm-smoke-submitter
+    # Avoid compute-instance lifecycle dependency (cjpvm/lrm-smoke-submitter must
+    # be manually started). CPU-D2ADSV4 is an autoscaling AmlCompute cluster; the
+    # data read uses the submitter's AAD token via user_identity passthrough.
+    compute: azureml:CPU-D2ADSV4
+    identity:
+      type: user_identity
     environment: azureml:lrm-relay-env:2
     code: ..
     inputs:
