@@ -75,20 +75,20 @@ jobs:
     type: command
     display_name: relay-parallel-fanout-boundary
     compute: azureml:CPU-D2ADSV4
-    environment:
-      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
-      conda_file:
-        name: phase1-fanout-doc
-        channels: [conda-forge]
-        dependencies:
-          - python=3.10
+    environment: azureml:lrm-relay-env:2
     code: ..
     inputs:
       discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
     outputs:
       raw: ${{parent.outputs.raw}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_raw', '${{outputs.raw}}')).mkdir(parents=True, exist_ok=True); print('fanout: generate one command per raw manifest row'); print('fanout script: python aml_dataprep/parallel/relay_one_shard.py --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --split <train|val> --shard_index <n> --output_dir ${{outputs.raw}}')"
+      python aml_dataprep/parallel/run_smoke_subset.py
+      --stage relay
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_out ${{outputs.raw}}
+      --max_train_shards 1
+      --max_val_shards 1
+      --max_lines 1000
 
   vocab_spill_parallel_fanout_boundary:
     type: command
@@ -108,7 +108,14 @@ jobs:
     outputs:
       spill: ${{parent.outputs.vocab_spill}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_spill', '${{outputs.spill}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_spill_one_shard.py --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --raw_root ${{inputs.raw}} --split <train|val> --shard_index <n> --output_dir ${{outputs.spill}} --num_buckets 4096')"
+      python aml_dataprep/parallel/run_smoke_subset.py
+      --stage spill
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root ${{inputs.raw}}
+      --spill_out ${{outputs.spill}}
+      --num_buckets 64
+      --max_train_shards 1
+      --max_val_shards 1
 
   vocab_reduce_parallel_fanout_boundary:
     type: command
@@ -127,7 +134,11 @@ jobs:
     outputs:
       reduced: ${{parent.outputs.vocab_reduced}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_reduced', '${{outputs.reduced}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_reduce_bucket.py --spill_root ${{inputs.spill}} --domain <0..4> --bucket <0..4095> --output_dir ${{outputs.reduced}}')"
+      python aml_dataprep/parallel/run_smoke_subset.py
+      --stage reduce
+      --spill_root ${{inputs.spill}}
+      --reduced_out ${{outputs.reduced}}
+      --num_buckets 64
 
   vocab_prefix_sum:
     type: command
@@ -151,7 +162,7 @@ jobs:
       python aml_dataprep/parallel/vocab_prefix_sum.py
       --reduced_root ${{inputs.reduced}}
       --output_dir ${{outputs.vocab}}
-      --num_buckets 4096
+      --num_buckets 64
       --data_version ${{inputs.data_version}}
       --layout_version ${{inputs.layout_version}}
 
@@ -173,7 +184,12 @@ jobs:
     outputs:
       markers: ${{parent.outputs.vocab_finalize_markers}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_markers', '${{outputs.markers}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_finalize_bucket.py --reduced_root ${{inputs.reduced}} --vocab_root ${{inputs.vocab}} --domain <0..4> --bucket <0..4095>')"
+      python aml_dataprep/parallel/run_smoke_subset.py
+      --stage finalize
+      --reduced_root ${{inputs.reduced}}
+      --vocab_root ${{inputs.vocab}}
+      --markers_out ${{outputs.markers}}
+      --num_buckets 64
 
   parquet_parallel_fanout_boundary:
     type: command
@@ -186,6 +202,12 @@ jobs:
         channels: [conda-forge]
         dependencies:
           - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+              - numpy
+              - pandas
+              - pyarrow
     code: ..
     inputs:
       discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
@@ -195,7 +217,16 @@ jobs:
     outputs:
       seqview: ${{parent.outputs.seqview}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_seqview', '${{outputs.seqview}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/parquet_one_shard.py --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --raw_root ${{inputs.raw}} --vocab_dir ${{inputs.vocab}} --split <train|val> --shard_index <n> --output_dir ${{outputs.seqview}} --mode all_events')"
+      python aml_dataprep/parallel/run_smoke_subset.py
+      --stage parquet
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root ${{inputs.raw}}
+      --vocab_dir ${{inputs.vocab}}
+      --seqview_out ${{outputs.seqview}}
+      --num_buckets 64
+      --max_train_shards 1
+      --max_val_shards 1
+      --mode all_events
 
   aggregate_seqview_manifest:
     type: command
