@@ -13,24 +13,9 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  data_version:
-    type: string
-    default: v3-20260624-pconv-parallel-prep
-  layout_version:
-    type: string
-    default: layout_v1
-  source_root:
-    type: uri_folder
-    path: azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
-  num_buckets:
-    type: integer
-    default: 4096
-  fanout_note:
-    type: string
-    default: >-
-      Generate one command job per raw manifest row for relay_one_shard,
-      vocab_spill_one_shard, and parquet_one_shard; generate one command job per
-      numeric domain/bucket pair for vocab_reduce_bucket and vocab_finalize_bucket.
+  data_version: v3-20260624-pconv-parallel-prep
+  layout_version: layout_v1
+  source_root: azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
 
 outputs:
   discovered:
@@ -92,11 +77,10 @@ jobs:
     code: ..
     inputs:
       discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
-      fanout_note: ${{parent.inputs.fanout_note}}
     outputs:
       raw: ${{parent.outputs.raw}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_raw', '${{outputs.raw}}')).mkdir(parents=True, exist_ok=True); print('${{inputs.fanout_note}}'); print('fanout script: python aml_dataprep/parallel/relay_one_shard.py --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --split <train|val> --shard_index <n> --output_dir ${{outputs.raw}}')"
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_raw', '${{outputs.raw}}')).mkdir(parents=True, exist_ok=True); print('fanout: generate one command per raw manifest row'); print('fanout script: python aml_dataprep/parallel/relay_one_shard.py --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --split <train|val> --shard_index <n> --output_dir ${{outputs.raw}}')"
 
   vocab_spill_parallel_fanout_boundary:
     type: command
@@ -113,11 +97,10 @@ jobs:
     inputs:
       discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
       raw: ${{parent.jobs.relay_parallel_fanout_boundary.outputs.raw}}
-      num_buckets: ${{parent.inputs.num_buckets}}
     outputs:
       spill: ${{parent.outputs.vocab_spill}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_spill', '${{outputs.spill}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_spill_one_shard.py --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --raw_root ${{inputs.raw}} --split <train|val> --shard_index <n> --output_dir ${{outputs.spill}} --num_buckets ${{inputs.num_buckets}}')"
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_spill', '${{outputs.spill}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_spill_one_shard.py --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --raw_root ${{inputs.raw}} --split <train|val> --shard_index <n> --output_dir ${{outputs.spill}} --num_buckets 4096')"
 
   vocab_reduce_parallel_fanout_boundary:
     type: command
@@ -133,11 +116,10 @@ jobs:
     code: ..
     inputs:
       spill: ${{parent.jobs.vocab_spill_parallel_fanout_boundary.outputs.spill}}
-      num_buckets: ${{parent.inputs.num_buckets}}
     outputs:
       reduced: ${{parent.outputs.vocab_reduced}}
     command: >-
-      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_reduced', '${{outputs.reduced}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_reduce_bucket.py --spill_root ${{inputs.spill}} --domain <0..4> --bucket <0..num_buckets-1> --output_dir ${{outputs.reduced}}')"
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_reduced', '${{outputs.reduced}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_reduce_bucket.py --spill_root ${{inputs.spill}} --domain <0..4> --bucket <0..4095> --output_dir ${{outputs.reduced}}')"
 
   vocab_prefix_sum:
     type: command
@@ -153,7 +135,6 @@ jobs:
     code: ..
     inputs:
       reduced: ${{parent.jobs.vocab_reduce_parallel_fanout_boundary.outputs.reduced}}
-      num_buckets: ${{parent.inputs.num_buckets}}
       data_version: ${{parent.inputs.data_version}}
       layout_version: ${{parent.inputs.layout_version}}
     outputs:
@@ -162,7 +143,7 @@ jobs:
       python aml_dataprep/parallel/vocab_prefix_sum.py
       --reduced_root ${{inputs.reduced}}
       --output_dir ${{outputs.vocab}}
-      --num_buckets ${{inputs.num_buckets}}
+      --num_buckets 4096
       --data_version ${{inputs.data_version}}
       --layout_version ${{inputs.layout_version}}
 
@@ -184,7 +165,7 @@ jobs:
     outputs:
       finalized_vocab: ${{parent.outputs.vocab}}
     command: >-
-      python -c "print('fanout script: python aml_dataprep/parallel/vocab_finalize_bucket.py --reduced_root ${{inputs.reduced}} --vocab_root ${{inputs.vocab}} --domain <0..4> --bucket <0..num_buckets-1>')"
+      python -c "print('fanout script: python aml_dataprep/parallel/vocab_finalize_bucket.py --reduced_root ${{inputs.reduced}} --vocab_root ${{inputs.vocab}} --domain <0..4> --bucket <0..4095>')"
 
   parquet_parallel_fanout_boundary:
     type: command
