@@ -24,21 +24,45 @@ def _list_tsv(root, split):
     return sorted(n for n in names if n.endswith(".tsv"))
 
 
+def _azureml_paths_prefix(root):
+    marker = "/paths/"
+    if marker not in root:
+        return root.rstrip("/"), ""
+    prefix, path = root.split(marker, 1)
+    return prefix.rstrip("/") + "/paths", path.strip("/")
+
+
+def _uri_join(root, path):
+    """Return a canonical source URI for fsspec-openable manifest rows.
+
+    azureml.fsspec.fs.ls() may return either a fully-qualified azureml:// URI or
+    a datastore-relative path like local/User/.../train/foo.tsv. The relay step
+    needs fully-qualified /datastores/.../paths/... URIs, and blindly appending
+    the listed path to source_root can duplicate the datastore path and yield
+    StreamError(NotFound).
+    """
+    if not root.startswith("azureml://"):
+        return os.path.abspath(path)
+    if path.startswith("azureml://"):
+        return path
+
+    prefix, root_path = _azureml_paths_prefix(root.rstrip("/"))
+    listed = path.lstrip("/")
+    if root_path and listed.startswith(root_path.rstrip("/") + "/"):
+        return prefix + "/" + listed
+    return root.rstrip("/") + "/" + listed
+
+
 def _size(root, path):
     try:
         if root.startswith("azureml://"):
             from azureml.fsspec import AzureMachineLearningFileSystem
 
-            return AzureMachineLearningFileSystem(root).info(path).get("size")
+            uri = _uri_join(root, path)
+            return AzureMachineLearningFileSystem(uri.rsplit("/", 1)[0]).info(uri).get("size")
         return os.path.getsize(path)
     except Exception:
         return None
-
-
-def _uri_join(root, path):
-    if root.startswith("azureml://"):
-        return path if path.startswith("azureml://") else root.rstrip("/") + "/" + path.lstrip("/")
-    return os.path.abspath(path)
 
 
 def main():
@@ -53,11 +77,12 @@ def main():
     rows = []
     for split in ("train", "val"):
         for shard_index, path in enumerate(_list_tsv(args.source_root, split)):
-            name = os.path.basename(urlparse(path).path)
+            source_uri = _uri_join(args.source_root, path)
+            name = os.path.basename(urlparse(source_uri).path)
             rows.append({
                 "split": split,
                 "shard_index": shard_index,
-                "source_uri": _uri_join(args.source_root, path),
+                "source_uri": source_uri,
                 "dest_relpath": f"{split}/{name}",
                 "size_bytes": _size(args.source_root, path),
                 "etag": None,
