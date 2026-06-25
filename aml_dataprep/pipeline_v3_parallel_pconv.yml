@@ -13,14 +13,24 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  data_version: v3-20260624-pconv-parallel-prep
-  layout_version: layout_v1
-  source_root: azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
-  num_buckets: 4096
-  fanout_note: >-
-    Generate one command job per raw manifest row for relay_one_shard,
-    vocab_spill_one_shard, and parquet_one_shard; generate one command job per
-    numeric domain/bucket pair for vocab_reduce_bucket and vocab_finalize_bucket.
+  data_version:
+    type: string
+    default: v3-20260624-pconv-parallel-prep
+  layout_version:
+    type: string
+    default: layout_v1
+  source_root:
+    type: uri_folder
+    path: azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+  num_buckets:
+    type: integer
+    default: 4096
+  fanout_note:
+    type: string
+    default: >-
+      Generate one command job per raw manifest row for relay_one_shard,
+      vocab_spill_one_shard, and parquet_one_shard; generate one command job per
+      numeric domain/bucket pair for vocab_reduce_bucket and vocab_finalize_bucket.
 
 outputs:
   discovered:
