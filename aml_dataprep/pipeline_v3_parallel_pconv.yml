@@ -46,6 +46,10 @@ outputs:
     type: uri_folder
     mode: rw_mount
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/seqview
+  seqview_metadata:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/seqview_metadata
 
 jobs:
   discover_raw_shards:
@@ -209,8 +213,11 @@ jobs:
       seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
       vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
       finalize_markers: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.markers}}
+    outputs:
+      metadata: ${{parent.outputs.seqview_metadata}}
     command: >-
       python aml_dataprep/parallel/aggregate_seqview_manifest.py
       --seqview_dir ${{inputs.seqview}}
       --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.metadata}}
       --mode all_events

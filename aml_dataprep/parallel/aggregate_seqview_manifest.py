@@ -12,6 +12,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--seqview_dir", required=True)
     p.add_argument("--vocab_dir", required=True)
+    p.add_argument("--output_dir", required=True, help="Writable output directory for metadata.json")
     p.add_argument("--mode", choices=["ads_only", "all_events"], default="all_events")
     p.add_argument("--embedding_model", default="paraphrase-multilingual-MiniLM-L12-v2")
     p.add_argument("--embedding_dim", type=int, default=384)
@@ -45,9 +46,11 @@ def main():
             for d in range(5)
         },
     }
-    with open(os.path.join(args.seqview_dir, "metadata.json"), "w", encoding="utf-8") as f:
+    os.makedirs(args.output_dir, exist_ok=True)
+    out_path = os.path.join(args.output_dir, "metadata.json")
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, indent=2, sort_keys=True)
-    print(f"wrote metadata.json train={num_train} eval={num_eval}", flush=True)
+    print(f"wrote {out_path} train={num_train} eval={num_eval}", flush=True)
 
 
 if __name__ == "__main__":
