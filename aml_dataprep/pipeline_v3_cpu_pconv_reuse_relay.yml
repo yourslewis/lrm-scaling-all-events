@@ -11,7 +11,7 @@ display_name: lrm-l800-pconv-v3-reuse-relay-cpu-e32-msi-vocab
 experiment_name: lrm-l800-pipeline
 description: >-
   Reuse the pconv v3 relay output from clever_plum_pz8qg73h34, then rerun vocab
-  on Linux CPU-E32aV4 with managed identity and continue parquet/encode/train without regenerating relay.
+  on Linux CPU-E32aV4 with user-identity passthrough and continue parquet/encode/train without regenerating relay.
 
 settings:
   default_compute: azureml:CPU-D2ADSV4
@@ -34,6 +34,8 @@ jobs:
     type: command
     display_name: vocab-step1-v3-e32
     compute: azureml:CPU-E32aV4
+    identity:
+      type: user_identity
     environment:
       image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
       conda_file:
