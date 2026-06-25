@@ -15,7 +15,7 @@ settings:
 inputs:
   data_version: v3-20260624-pconv-parallel-prep
   layout_version: layout_v1
-  source_root: azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+  source_root: azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
 
 outputs:
   discovered:
