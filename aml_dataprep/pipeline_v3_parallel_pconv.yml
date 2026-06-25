@@ -78,7 +78,7 @@ jobs:
   relay_parallel_fanout_boundary:
     type: command
     display_name: relay-parallel-fanout-boundary
-    compute: azureml:CPU-D2ADSV4
+    compute: azureml:CPU-ECONVDDA
     environment: azureml:lrm-relay-env:2
     code: ..
     inputs:
