@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: inspect datastore credential shape and resolve which service
+# principal or managed identity is attached.
+# Performance tricks: keep JSON parsing local in Cloud Shell and emit compact
+# identity fields instead of full datastore payloads.
+
 # Inspect msan networkprotection datastore credential + resolve which SP it is.
 set -uo pipefail
 SUB=f920ee3b-6bdc-48c6-a487-9e0397b69322

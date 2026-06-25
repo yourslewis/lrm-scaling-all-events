@@ -4,6 +4,14 @@ Lists train/val shard counts + reads the first bytes of one shard (proves
 byte-level read through the datastore credential, not just metadata). Prints a
 clear PASS/FAIL line. Cheap: no full download.
 """
+
+# Workflow notes:
+# Lightweight msan datastore probe: list NetworkProtection paths from AML compute
+# using the same identity path that the real prep jobs need.
+# Performance tricks:
+# - Limit listing to small directory probes so diagnostics return quickly.
+# - Print raw failures so identity/mount problems are visible in AML logs.
+
 import sys
 from azureml.fsspec import AzureMachineLearningFileSystem as FS
 

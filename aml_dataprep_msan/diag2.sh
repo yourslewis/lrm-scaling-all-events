@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: compare source pipeline status, inspect the failing parent,
+# and check whether identity updates are supported before trying destructive fixes.
+# Performance tricks: query only status/help surfaces first to avoid downloading
+# large AML artifacts when the problem is control-plane configuration.
+
 # Q2 diagnosis + fix feasibility. Run in Cloud Shell as WL.
 set -uo pipefail
 

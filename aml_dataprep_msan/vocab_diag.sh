@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: submit/inspect focused vocab diagnostics for the msan data
+# path before running the full L800 prep.
+# Performance tricks: isolate vocab checks from parquet/encode/train so identity
+# and mount issues fail fast and cheaply.
+
 # Authoritative vocab-failure diagnosis. Run in Cloud Shell.
 set -uo pipefail
 SUB=f920ee3b-6bdc-48c6-a487-9e0397b69322

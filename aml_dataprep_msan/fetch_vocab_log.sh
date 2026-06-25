@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: find the vocab child run for an msan pipeline and pull the
+# smallest useful log tail.
+# Performance tricks: target one child and one log directory to avoid downloading
+# unrelated AML artifacts.
+
 # Download the vocab step logs and commit them into the repo so they can be read
 # off-terminal. Run in Cloud Shell.
 set -uo pipefail

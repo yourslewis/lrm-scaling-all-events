@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: locate the parquet child run, download its logs, and print the
+# relevant tail for root-cause analysis.
+# Performance tricks: download only after resolving the child run id; tail logs
+# instead of dumping full artifacts into chat/Cloud Shell.
+
 # Pull the FAILED parquet step's error from the source pipeline.
 set -uo pipefail
 SRC_SUB=72a0fe10-0a76-4898-9b7b-640e6e236fdc

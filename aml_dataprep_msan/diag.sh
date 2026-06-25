@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: quick first-pass msan diagnosis for compute identity,
+# datastore credentials, and mount readability.
+# Performance tricks: use narrow az --query projections and head-limited output so
+# Cloud Shell logs stay readable while preserving the key failure signals.
+
 # Diagnostics for the msan LRM-L800 work. Run in Cloud Shell as WL.
 set -uo pipefail
 SUB=f920ee3b-6bdc-48c6-a487-9e0397b69322

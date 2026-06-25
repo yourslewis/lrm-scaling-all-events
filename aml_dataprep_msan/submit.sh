@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Overall workflow: submit the msan AML pipeline with the known subscription,
+# resource group, and workspace wiring.
+# Performance tricks: centralize these constants here so repeated retries do not
+# risk typo-driven duplicate runs in the wrong workspace.
+
 # Submit an msan LRM-L800 job and capture name+studio URL cleanly.
 # Usage: bash aml_dataprep_msan/submit.sh probe   (or: vocab)
 set -uo pipefail
