@@ -34,6 +34,10 @@ outputs:
     type: uri_folder
     mode: rw_mount
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab_reduced
+  vocab_offsets:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab_offsets
   vocab:
     type: uri_folder
     mode: rw_mount
@@ -157,11 +161,11 @@ jobs:
       data_version: ${{parent.inputs.data_version}}
       layout_version: ${{parent.inputs.layout_version}}
     outputs:
-      vocab: ${{parent.outputs.vocab}}
+      offsets: ${{parent.outputs.vocab_offsets}}
     command: >-
       python aml_dataprep/parallel/vocab_prefix_sum.py
       --reduced_root ${{inputs.reduced}}
-      --output_dir ${{outputs.vocab}}
+      --output_dir ${{outputs.offsets}}
       --num_buckets 64
       --data_version ${{inputs.data_version}}
       --layout_version ${{inputs.layout_version}}
@@ -180,14 +184,16 @@ jobs:
     code: ..
     inputs:
       reduced: ${{parent.jobs.vocab_reduce_parallel_fanout_boundary.outputs.reduced}}
-      vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
+      offsets: ${{parent.jobs.vocab_prefix_sum.outputs.offsets}}
     outputs:
+      vocab: ${{parent.outputs.vocab}}
       markers: ${{parent.outputs.vocab_finalize_markers}}
     command: >-
       python aml_dataprep/parallel/run_smoke_subset.py
       --stage finalize
       --reduced_root ${{inputs.reduced}}
-      --vocab_root ${{inputs.vocab}}
+      --offsets_root ${{inputs.offsets}}
+      --vocab_root ${{outputs.vocab}}
       --markers_out ${{outputs.markers}}
       --num_buckets 64
 
@@ -212,7 +218,7 @@ jobs:
     inputs:
       discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
       raw: ${{parent.jobs.relay_parallel_fanout_boundary.outputs.raw}}
-      vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
+      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.vocab}}
       finalize_markers: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.markers}}
     outputs:
       seqview: ${{parent.outputs.seqview}}
@@ -242,7 +248,7 @@ jobs:
     code: ..
     inputs:
       seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
-      vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
+      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.vocab}}
       finalize_markers: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.markers}}
     outputs:
       metadata: ${{parent.outputs.seqview_metadata}}

@@ -10,6 +10,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -109,7 +110,24 @@ def _reduce(args):
         json.dump([{"domain": d, "bucket": b} for d, b in buckets], f, sort_keys=True)
 
 
+def _copy_offsets_to_vocab(offsets_root, vocab_root):
+    if not offsets_root:
+        return
+    os.makedirs(vocab_root, exist_ok=True)
+    for name in ("vocab_offsets.json", "vocab_meta.json"):
+        src = os.path.join(offsets_root, name)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(vocab_root, name))
+    for entry in os.listdir(offsets_root):
+        if entry.startswith("domain_") and os.path.isdir(os.path.join(offsets_root, entry)):
+            dst = os.path.join(vocab_root, entry)
+            if os.path.exists(dst):
+                shutil.rmtree(dst)
+            shutil.copytree(os.path.join(offsets_root, entry), dst)
+
+
 def _finalize(args):
+    _copy_offsets_to_vocab(args.offsets_root, args.vocab_root)
     buckets = []
     meta_path = os.path.join(args.reduced_root, "_SMOKE_BUCKETS.json")
     if os.path.exists(meta_path):
@@ -152,6 +170,7 @@ def main():
     p.add_argument("--reduced_out")
     p.add_argument("--vocab_root")
     p.add_argument("--vocab_dir")
+    p.add_argument("--offsets_root")
     p.add_argument("--markers_out")
     p.add_argument("--seqview_out")
     p.add_argument("--num_buckets", type=int, default=64)
