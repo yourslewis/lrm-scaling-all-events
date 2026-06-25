@@ -1,0 +1,219 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+type: pipeline
+display_name: lrm-l800-pconv-v3-parallel-cpu-prep
+experiment_name: lrm-l800-pipeline
+description: >-
+  Phase 1 CPU-prep scaffold for parallel pconv v3 data prep. This file avoids
+  uncertain AML v2 parallel-job schema by wiring real command scripts and
+  documenting fanout boundaries. Expand fanout jobs from manifests before a full
+  submission; this scaffold must not submit encode/train/AML jobs by itself.
+
+settings:
+  default_compute: azureml:CPU-D2ADSV4
+  continue_on_step_failure: false
+
+inputs:
+  data_version: v3-20260624-pconv-parallel-prep
+  layout_version: layout_v1
+  source_root: azureml://datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+  num_buckets: 4096
+  fanout_note: >-
+    Generate one command job per raw manifest row for relay_one_shard,
+    vocab_spill_one_shard, and parquet_one_shard; generate one command job per
+    numeric domain/bucket pair for vocab_reduce_bucket and vocab_finalize_bucket.
+
+outputs:
+  discovered:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/discovered
+  raw:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/raw
+  vocab_spill:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab_spill
+  vocab_reduced:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab_reduced
+  vocab:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab
+  seqview:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/seqview
+
+jobs:
+  discover_raw_shards:
+    type: command
+    display_name: discover-raw-shards
+    compute: azureml:CPU-D2ADSV4
+    identity:
+      type: user_identity
+    environment: azureml:lrm-relay-env:2
+    code: ..
+    inputs:
+      source_root: ${{parent.inputs.source_root}}
+      data_version: ${{parent.inputs.data_version}}
+    outputs:
+      discovered: ${{parent.outputs.discovered}}
+    command: >-
+      python aml_dataprep/parallel/discover_raw_shards.py
+      --source_root ${{inputs.source_root}}
+      --data_version ${{inputs.data_version}}
+      --output_dir ${{outputs.discovered}}
+
+  relay_parallel_fanout_boundary:
+    type: command
+    display_name: relay-parallel-fanout-boundary
+    compute: azureml:CPU-D2ADSV4
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: phase1-fanout-doc
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      fanout_note: ${{parent.inputs.fanout_note}}
+    outputs:
+      raw: ${{parent.outputs.raw}}
+    command: >-
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_raw', '${{outputs.raw}}')).mkdir(parents=True, exist_ok=True); print('${{inputs.fanout_note}}'); print('fanout script: python aml_dataprep/parallel/relay_one_shard.py --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --split <train|val> --shard_index <n> --output_dir ${{outputs.raw}}')"
+
+  vocab_spill_parallel_fanout_boundary:
+    type: command
+    display_name: vocab-spill-parallel-fanout-boundary
+    compute: azureml:CPU-D2ADSV4
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: phase1-fanout-doc
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.relay_parallel_fanout_boundary.outputs.raw}}
+      num_buckets: ${{parent.inputs.num_buckets}}
+    outputs:
+      spill: ${{parent.outputs.vocab_spill}}
+    command: >-
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_spill', '${{outputs.spill}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_spill_one_shard.py --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --raw_root ${{inputs.raw}} --split <train|val> --shard_index <n> --output_dir ${{outputs.spill}} --num_buckets ${{inputs.num_buckets}}')"
+
+  vocab_reduce_parallel_fanout_boundary:
+    type: command
+    display_name: vocab-reduce-parallel-fanout-boundary
+    compute: azureml:CPU-ECONVDDA
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: phase1-fanout-doc
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      spill: ${{parent.jobs.vocab_spill_parallel_fanout_boundary.outputs.spill}}
+      num_buckets: ${{parent.inputs.num_buckets}}
+    outputs:
+      reduced: ${{parent.outputs.vocab_reduced}}
+    command: >-
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_reduced', '${{outputs.reduced}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_reduce_bucket.py --spill_root ${{inputs.spill}} --domain <0..4> --bucket <0..num_buckets-1> --output_dir ${{outputs.reduced}}')"
+
+  vocab_prefix_sum:
+    type: command
+    display_name: vocab-prefix-sum
+    compute: azureml:CPU-ECONVDDA
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: vocab-prefix-sum-v3
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      reduced: ${{parent.jobs.vocab_reduce_parallel_fanout_boundary.outputs.reduced}}
+      num_buckets: ${{parent.inputs.num_buckets}}
+      data_version: ${{parent.inputs.data_version}}
+      layout_version: ${{parent.inputs.layout_version}}
+    outputs:
+      vocab: ${{parent.outputs.vocab}}
+    command: >-
+      python aml_dataprep/parallel/vocab_prefix_sum.py
+      --reduced_root ${{inputs.reduced}}
+      --output_dir ${{outputs.vocab}}
+      --num_buckets ${{inputs.num_buckets}}
+      --data_version ${{inputs.data_version}}
+      --layout_version ${{inputs.layout_version}}
+
+  vocab_finalize_parallel_fanout_boundary:
+    type: command
+    display_name: vocab-finalize-parallel-fanout-boundary
+    compute: azureml:CPU-ECONVDDA
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: phase1-fanout-doc
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      reduced: ${{parent.jobs.vocab_reduce_parallel_fanout_boundary.outputs.reduced}}
+      vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
+    outputs:
+      finalized_vocab: ${{parent.outputs.vocab}}
+    command: >-
+      python -c "print('fanout script: python aml_dataprep/parallel/vocab_finalize_bucket.py --reduced_root ${{inputs.reduced}} --vocab_root ${{inputs.vocab}} --domain <0..4> --bucket <0..num_buckets-1>')"
+
+  parquet_parallel_fanout_boundary:
+    type: command
+    display_name: parquet-parallel-fanout-boundary
+    compute: azureml:CPU-ECONVDDA
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: phase1-fanout-doc
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.relay_parallel_fanout_boundary.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.finalized_vocab}}
+    outputs:
+      seqview: ${{parent.outputs.seqview}}
+    command: >-
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_seqview', '${{outputs.seqview}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/parquet_one_shard.py --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl --raw_root ${{inputs.raw}} --vocab_dir ${{inputs.vocab}} --split <train|val> --shard_index <n> --output_dir ${{outputs.seqview}} --mode all_events')"
+
+  aggregate_seqview_manifest:
+    type: command
+    display_name: aggregate-seqview-manifest
+    compute: azureml:CPU-D2ADSV4
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: seqview-manifest-v3
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
+      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.finalized_vocab}}
+    command: >-
+      python aml_dataprep/parallel/aggregate_seqview_manifest.py
+      --seqview_dir ${{inputs.seqview}}
+      --vocab_dir ${{inputs.vocab}}
+      --mode all_events
