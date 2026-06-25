@@ -7,11 +7,11 @@ $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
 # vocab, moved to a larger E32 CPU pool.
 # ===========================================================================
 type: pipeline
-display_name: lrm-l800-pconv-v3-reuse-relay-e32-vocab
+display_name: lrm-l800-pconv-v3-reuse-relay-linux-e32-vocab
 experiment_name: lrm-l800-pipeline
 description: >-
   Reuse the pconv v3 relay output from clever_plum_pz8qg73h34, then rerun vocab
-  on WIN-E32aV4 and continue parquet/encode/train without regenerating relay.
+  on Linux CPU-E32aV4 and continue parquet/encode/train without regenerating relay.
 
 settings:
   default_compute: azureml:CPU-D2ADSV4
@@ -33,7 +33,7 @@ jobs:
   vocab:
     type: command
     display_name: vocab-step1-v3-e32
-    compute: azureml:WIN-E32aV4
+    compute: azureml:CPU-E32aV4
     environment:
       image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
       conda_file:
