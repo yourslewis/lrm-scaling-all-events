@@ -7,11 +7,11 @@ $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
 # vocab, moved to a larger E32 CPU pool.
 # ===========================================================================
 type: pipeline
-display_name: lrm-l800-pconv-v3-reuse-relay-linux-e32-vocab
+display_name: lrm-l800-pconv-v3-reuse-relay-linux-e32-vocab2
 experiment_name: lrm-l800-pipeline
 description: >-
   Reuse the pconv v3 relay output from clever_plum_pz8qg73h34, then rerun vocab
-  on Linux CPU-E32aV4 and continue parquet/encode/train without regenerating relay.
+  on explicit Linux CPU-E32-LINUX and continue parquet/encode/train without regenerating relay.
 
 settings:
   default_compute: azureml:CPU-D2ADSV4
@@ -26,14 +26,14 @@ outputs:
   l800_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/l800_output_e32_vocab
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/l800_output_linux_e32
 
 jobs:
   # ---------- step 1: vocab (CPU, bounded-memory v3) ---------------------------
   vocab:
     type: command
     display_name: vocab-step1-v3-e32
-    compute: azureml:CPU-E32aV4
+    compute: azureml:CPU-E32-LINUX
     environment:
       image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
       conda_file:
@@ -51,7 +51,7 @@ jobs:
       vocab:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/vocab_e32
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/vocab_linux_e32
     command: >-
       SPILL=$(mktemp -d) &&
       python data_prep/step1_collect_vocab_v3.py
@@ -90,7 +90,7 @@ jobs:
       seqview:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/seqview_e32_vocab
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/seqview_linux_e32
     command: >-
       python data_prep/step3_v3.py
       --vocab_dir ${{inputs.vocab}}
@@ -119,7 +119,7 @@ jobs:
       embeddings:
         type: uri_folder
         mode: rw_mount
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/embeddings_e32_vocab
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/embeddings_linux_e32
     command: >-
       pip install -q "sentence-transformers==5.4.1" &&
       nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
