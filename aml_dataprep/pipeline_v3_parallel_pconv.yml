@@ -38,6 +38,10 @@ outputs:
     type: uri_folder
     mode: rw_mount
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab
+  vocab_finalize_markers:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/vocab_finalize_markers
   seqview:
     type: uri_folder
     mode: rw_mount
@@ -163,9 +167,9 @@ jobs:
       reduced: ${{parent.jobs.vocab_reduce_parallel_fanout_boundary.outputs.reduced}}
       vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
     outputs:
-      finalized_vocab: ${{parent.outputs.vocab}}
+      markers: ${{parent.outputs.vocab_finalize_markers}}
     command: >-
-      python -c "print('fanout script: python aml_dataprep/parallel/vocab_finalize_bucket.py --reduced_root ${{inputs.reduced}} --vocab_root ${{inputs.vocab}} --domain <0..4> --bucket <0..4095>')"
+      python -c "from pathlib import Path; import os; Path(os.environ.get('AZUREML_OUTPUT_markers', '${{outputs.markers}}')).mkdir(parents=True, exist_ok=True); print('fanout script: python aml_dataprep/parallel/vocab_finalize_bucket.py --reduced_root ${{inputs.reduced}} --vocab_root ${{inputs.vocab}} --domain <0..4> --bucket <0..4095>')"
 
   parquet_parallel_fanout_boundary:
     type: command
@@ -182,7 +186,8 @@ jobs:
     inputs:
       discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
       raw: ${{parent.jobs.relay_parallel_fanout_boundary.outputs.raw}}
-      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.finalized_vocab}}
+      vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
+      finalize_markers: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.markers}}
     outputs:
       seqview: ${{parent.outputs.seqview}}
     command: >-
@@ -202,7 +207,8 @@ jobs:
     code: ..
     inputs:
       seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
-      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.finalized_vocab}}
+      vocab: ${{parent.jobs.vocab_prefix_sum.outputs.vocab}}
+      finalize_markers: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.markers}}
     command: >-
       python aml_dataprep/parallel/aggregate_seqview_manifest.py
       --seqview_dir ${{inputs.seqview}}
