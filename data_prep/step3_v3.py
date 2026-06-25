@@ -14,8 +14,6 @@ import pickle
 from collections import OrderedDict
 from datetime import datetime
 
-import pandas as pd
-
 try:
     from data_prep.vocab_common_v3 import EVENT_TO_DOMAIN, bucket_of, extract_text_normalized
 except ModuleNotFoundError:  # pragma: no cover - supports `python data_prep/step3_v3.py`
@@ -95,6 +93,8 @@ def main():
     p.add_argument("--mode", choices=["ads_only", "all_events"], default="all_events")
     p.add_argument("--bucket_cache_size", type=int, default=64)
     args = p.parse_args()
+
+    import pandas as pd
 
     allowed = ALL_EVENTS if args.mode == "all_events" else AD_EVENTS
     lookup = ShardedText2Id(args.vocab_dir, cache_buckets=args.bucket_cache_size)

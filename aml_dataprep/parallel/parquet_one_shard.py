@@ -9,8 +9,6 @@ from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from data_prep.vocab_common_v3 import EVENT_TO_DOMAIN, bucket_of, extract_text_normalized
@@ -87,6 +85,8 @@ def main():
     p.add_argument("--mode", choices=["ads_only", "all_events"], default="all_events")
     p.add_argument("--bucket_cache_size", type=int, default=64)
     args = p.parse_args()
+
+    import pandas as pd
 
     row = _manifest_row(args.raw_manifest, args.split, args.shard_index)
     raw_path = os.path.join(args.raw_root, row["dest_relpath"])
