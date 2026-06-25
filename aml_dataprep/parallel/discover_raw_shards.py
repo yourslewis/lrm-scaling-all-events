@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 """Discover raw train/val TSV shards and write a source manifest."""
+
+# Workflow notes:
+# This is the discovery/root-of-truth step for the generated fan-out workflow:
+# enumerate train/val TSV shards once and emit a deterministic JSONL manifest
+# that downstream relay, vocab, and parquet workers address by split+shard_index.
+# Performance tricks:
+# - Store only URIs and sizes in the manifest; data bytes are streamed later.
+# - Sort shard names so retries and generated AML jobs remain deterministic.
+
 import argparse
 import json
 import os

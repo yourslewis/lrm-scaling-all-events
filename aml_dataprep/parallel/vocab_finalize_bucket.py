@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """Write one finalized vocab bucket mapping from reduced texts and offsets."""
+
+# Workflow notes:
+# Finalize one domain/bucket after reduce+prefix-sum: assign global item ids and
+# write both text2id and id2text shards for that bucket.
+# Performance tricks:
+# - Finalize buckets independently so AML can parallelize 5*num_buckets jobs.
+# - Use prefix-sum offsets to assign deterministic ids without cross-worker locks.
+
 import argparse
 import json
 import os

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """Deduplicate and sort one vocab spill domain/bucket."""
+
+# Workflow notes:
+# Reduce one domain/bucket by reading all spill parts, deduplicating normalized
+# texts, and writing a sorted unique text list plus a count sidecar.
+# Performance tricks:
+# - Bucket-level reduction bounds memory by domain/hash bucket.
+# - Sorting after dedupe makes downstream id assignment stable across retries.
+
 import argparse
 import glob
 import json

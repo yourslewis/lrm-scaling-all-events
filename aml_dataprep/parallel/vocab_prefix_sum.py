@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 """Compute deterministic vocab bucket offsets and metadata manifests."""
+
+# Workflow notes:
+# Scan reduced bucket counts and compute deterministic global id offsets, then
+# write the vocab manifests consumed by finalization, encoding, and parquet.
+# Performance tricks:
+# - Count small sidecar JSON files, not text payloads.
+# - Compute offsets centrally once so finalize workers can run embarrassingly
+#   parallel with stable item ids.
+
 import argparse
 import json
 import os

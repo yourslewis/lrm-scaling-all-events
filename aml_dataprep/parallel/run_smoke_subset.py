@@ -6,6 +6,15 @@ it executes a few deterministic shard/bucket units inside each boundary job so
 AML outputs are non-empty and validate IO/contracts before generated fan-out is
 used for the full run.
 """
+
+# Workflow notes:
+# The smoke runner exercises the same worker scripts as the real fan-out plan,
+# but on a tiny deterministic subset. It validates AML mounts, manifests, vocab,
+# parquet, and metadata contracts before spending quota on the full job matrix.
+# Performance tricks:
+# - Limit shard/bucket counts while preserving the full step ordering.
+# - Reuse local temporary roots so smoke checks do not create large blob outputs.
+
 import argparse
 import glob
 import json

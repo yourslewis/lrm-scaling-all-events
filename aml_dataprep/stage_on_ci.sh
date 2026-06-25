@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Overall workflow:
+# 1. Pull raw data from cosmos on a CI/AML node that has the right identity.
+# 2. Run CPU vocab/parquet locally where the small outputs fit on disk.
+# 3. Upload compact prep artifacts to workspaceblobstore for downstream GPU jobs.
+# Performance tricks: avoid moving the 168GB embedding tensor through CI; GPU
+# encode reads vocab from blob and writes embeddings directly.
+
 # ---------------------------------------------------------------------------
 # Stage step (runs ON the compute instance, NOT as a VC job).
 # Why here: the CI managed identity can READ cosmos (ADLS Gen1); a Singularity

@@ -13,6 +13,14 @@ Output layout (under --output_dir):
     train/train_chunk_*.tsv
     val/val_chunk_*.tsv
 """
+
+# Workflow notes:
+# Monolithic relay used by the non-generated CPU-prep pipeline: copy all raw TSV
+# shards from cosmos/ADLS into the workspace blob output before vocab/parquet.
+# Performance tricks:
+# - Stream shard-by-shard to fit small CI disks and avoid holding TSVs in memory.
+# - Keep --data_version in the command line so AML cache invalidation is explicit.
+
 import argparse
 import gc
 import os

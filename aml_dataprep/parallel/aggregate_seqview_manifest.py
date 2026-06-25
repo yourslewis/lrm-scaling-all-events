@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 """Aggregate per-shard seqview stats into metadata.json."""
+
+# Workflow notes:
+# This is the final CPU-prep bookkeeping step: collect per-shard parquet stats,
+# join them with vocab metadata, and write the metadata.json file expected by the
+# training dataloader.
+# Performance tricks:
+# - Aggregate only small JSON sidecars rather than reopening parquet payloads.
+# - Keep metadata writing in a dedicated writable output to avoid AML mount races.
+
 import argparse
 import glob
 import json

@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 """Spill normalized texts from one raw shard into domain/bucket part files."""
+
+# Workflow notes:
+# Parse one raw TSV shard and spill normalized event text into domain/bucket text
+# files. This is the first vocab fan-out stage and has no dependency on other
+# shards.
+# Performance tricks:
+# - Use stable hashing so all workers agree on bucket placement.
+# - Buffer open file handles with an LRU to avoid OS fd exhaustion on 512 buckets.
+# - Prefer orjson when present for the JSON event hot path.
+
 import argparse
 import json
 import os

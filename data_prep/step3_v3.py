@@ -5,6 +5,16 @@ This is the memory-bounded companion to step1_collect_vocab_v3.py. It never
 loads all domain text2id pickles at once. For each normalized text it hashes to
 the same bucket as step1_v3 and lazily loads that bucket's small mapping.
 """
+
+# Workflow notes:
+# Serial v3 parquet converter: read raw train/val TSV, map normalized event text
+# through the sharded vocab, and emit seqview parquet plus metadata for training.
+# Performance tricks:
+# - Cache only a bounded number of vocab buckets instead of loading all mappings.
+# - Stream input rows and write parquet parts per split to control memory.
+# - Reuse the same normalization/bucketing utilities as vocab creation to avoid
+#   train-time misses caused by drift.
+
 import argparse
 import glob
 import json

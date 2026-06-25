@@ -35,6 +35,16 @@ pickles + a manifest) so a v3-aware step3 can look up by the SAME hash without
 loading the whole dict. The monolithic .pkl is still written for backward compat;
 pass --no_monolithic to skip it when the full dict would not fit in the consumer.
 """
+
+# Workflow notes:
+# Bounded-memory v3 vocab builder for the serial CPU path: scan train/val events,
+# normalize text by domain, spill domain/bucket text, reduce each bucket, and
+# write sharded text2id/id2text vocab artifacts.
+# Performance tricks:
+# - Hash-bucket spills cap peak memory and allow very large vocabularies.
+# - LRU file handles avoid keeping 5*num_buckets descriptors open at once.
+# - --no_monolithic skips huge pickle maps when downstream scripts can read shards.
+
 import argparse, json, glob, os, logging, pickle, shutil
 from collections import OrderedDict
 

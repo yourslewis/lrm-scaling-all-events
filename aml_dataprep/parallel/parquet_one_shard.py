@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 """Convert one raw TSV shard to one seqview parquet part."""
+
+# Workflow notes:
+# Convert exactly one raw TSV shard into one seqview parquet part after vocab ids
+# are finalized. This is designed for AML fan-out: many instances can run the
+# same script with different split/shard_index values.
+# Performance tricks:
+# - Use a bounded LRU cache of vocab buckets to avoid loading the full text2id map.
+# - Keep the output partition one-to-one with input shards for simple retries.
+# - Prefer orjson when available for hot JSON event parsing.
+
 import argparse
 import json
 import os

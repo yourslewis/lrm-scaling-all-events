@@ -5,6 +5,16 @@ Unlike encode_embeddings_multigpu.py, this does not load a giant
 `domain_<d>_id2text.pkl`. It reads `domain_<d>_id2text/bucket_XXXX.pkl` shards
 emitted by step1_collect_vocab_v3.py and encodes one bucket at a time.
 """
+
+# Workflow notes:
+# 1. Iterate the sharded id2text vocab produced by step1_collect_vocab_v3.py,
+# 2. split bucket work across GPUs, 3. encode each bucket, 4. stitch bucket
+#    outputs into the domain_<d>/shard_0.npy arrays consumed by training.
+# Performance tricks:
+# - Read one bucket at a time instead of materializing the full vocab in RAM.
+# - Use one process per GPU so sentence-transformers keeps each device saturated.
+# - Persist float16 arrays to reduce upload/download time and GPU memory pressure.
+
 import argparse
 import json
 import logging

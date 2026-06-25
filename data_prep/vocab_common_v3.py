@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 """Shared v3 vocabulary normalization and bucketing utilities."""
+
+# Workflow notes:
+# Shared normalization and bucketing contract for v3 vocab, parquet, and encode
+# scripts. Any change here affects id assignment and cache compatibility.
+# Performance tricks:
+# - Use a stable BLAKE2 hash instead of Python hash() so bucket placement is
+#   reproducible across processes, machines, and retries.
+# - Normalize URL-like second text fields to domains to reduce vocabulary size.
+
 import hashlib
 from urllib.parse import urlparse
 

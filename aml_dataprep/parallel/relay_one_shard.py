@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 """Copy one manifest row into the deterministic raw layout."""
+
+# Workflow notes:
+# Relay one source manifest row from the cosmos-readable environment into the
+# deterministic raw/ train-val layout used by the rest of the pipeline.
+# Performance tricks:
+# - Stream bytes with shutil.copyfileobj so large shards do not sit in memory.
+# - Make each output path deterministic; reruns overwrite only the targeted shard.
+
 import argparse
 import json
 import os
