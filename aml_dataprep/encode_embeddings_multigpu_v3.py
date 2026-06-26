@@ -84,6 +84,7 @@ def main():
     p.add_argument("--domains", default="0,1,2,3,4")
     p.add_argument("--model_name", default=MODEL_NAME_DEFAULT)
     p.add_argument("--batch_size", type=int, default=1024)
+    p.add_argument("--emb_dim", type=int, default=EMB_DIM_DEFAULT)
     p.add_argument("--num_gpus", type=int, default=None)
     args = p.parse_args()
 
@@ -95,7 +96,7 @@ def main():
 
     with open(os.path.join(args.vocab_dir, "vocab_meta.json")) as f:
         meta = json.load(f)
-    emb_dim = EMB_DIM_DEFAULT
+    emb_dim = args.emb_dim
     domains = [int(d) for d in args.domains.split(",") if d != ""]
 
     # Validate manifests up front.
