@@ -49,17 +49,16 @@ jobs:
     outputs:
       embeddings: ${{parent.outputs.embeddings}}
     command: >-
-      bash -lc '
-      set -euo pipefail;
-      pip install -q "sentence-transformers==5.4.1";
+      set -e &&
+      pip install -q "sentence-transformers==5.4.1" &&
+      nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader &&
       python aml_dataprep/encode_embeddings_multigpu_v3.py
       --vocab_dir ${{inputs.vocab}}
       --output_dir ${{outputs.embeddings}}
       --domains 0,1,2,3,4
       --batch_size 1024
       --model_name sentence-transformers/all-MiniLM-L6-v2
-      --emb_dim 384;
-      '
+      --emb_dim 384
 
   train:
     type: command
@@ -84,12 +83,11 @@ jobs:
     outputs:
       model: ${{parent.outputs.train_output}}
     command: >-
-      bash -lc '
-      set -euo pipefail;
-      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true;
-      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_epochs.gin;
-      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_epochs.gin;
-      cd proposed_2-mmoe_ple/train;
+      set -e &&
+      (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_epochs.gin &&
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_epochs.gin &&
+      cd proposed_2-mmoe_ple/train &&
       torchrun --nproc_per_node=8 main.py
       --gin_config_file=/tmp/train_epochs.gin
       --data_path=${{inputs.seqview}}/train
@@ -100,8 +98,7 @@ jobs:
       --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
       --output_path=${{outputs.model}}
       --mode=job
-      --run_id=pconv_10shard_epochs_${{inputs.num_epochs}};
-      '
+      --run_id=pconv_10shard_epochs_${{inputs.num_epochs}}
 
   evaluate:
     type: command
@@ -127,16 +124,15 @@ jobs:
     outputs:
       eval: ${{parent.outputs.eval_output}}
     command: >-
-      bash -lc '
-      set -euo pipefail;
-      mkdir -p ${{outputs.eval}};
-      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true;
-      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/eval_epochs.gin;
-      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/eval_epochs.gin;
-      CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1);
-      if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi;
-      if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi;
-      echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt;
+      set -e &&
+      mkdir -p ${{outputs.eval}} &&
+      (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/eval_epochs.gin &&
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/eval_epochs.gin &&
+      CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1) &&
+      if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi &&
+      if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi &&
+      echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
       torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
       --gin_config_file=/tmp/eval_epochs.gin
       --data_path=${{inputs.seqview}}/eval
@@ -148,5 +144,4 @@ jobs:
       --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
       --eval_batches=100
       --output_json=${{outputs.eval}}/eval_per_event_type.json
-      --mode=job;
-      '
+      --mode=job
