@@ -276,11 +276,11 @@ jobs:
     display_name: encode-embeddings-smoke-v3
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
-      instance_type: Singularity.ND40rs_v2_SSD_v4-1
+      instance_type: Singularity.ND96rs_v4
       properties:
         s_vc: ads-relevance
         sla_tier: Premium
-    environment: azureml:recsys-cu121-torch24-transformers:25
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.vocab}}
@@ -288,11 +288,11 @@ jobs:
     outputs:
       embeddings: ${{parent.outputs.embeddings}}
     command: >-
-      torchrun --nproc_per_node=1 aml_dataprep/encode_embeddings_multigpu_v3.py
+      pip install -q "sentence-transformers==5.4.1" && nvidia-smi --query-gpu=name --format=csv,noheader | head -1 && python aml_dataprep/encode_embeddings_multigpu_v3.py
       --vocab_dir ${{inputs.vocab}}
       --output_dir ${{outputs.embeddings}}
       --domains 0,1,2,3,4
-      --batch_size 256
+      --batch_size 1024
       --model_name sentence-transformers/all-MiniLM-L6-v2
       --emb_dim 384
 
@@ -301,11 +301,11 @@ jobs:
     display_name: train-3-epochs-smoke-v3
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
-      instance_type: Singularity.ND40rs_v2_SSD_v4-1
+      instance_type: Singularity.ND96rs_v4
       properties:
         s_vc: ads-relevance
         sla_tier: Premium
-    environment: azureml:recsys-cu121-torch24-transformers:25
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
@@ -318,17 +318,17 @@ jobs:
       set -euo pipefail;
       cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_3epochs.gin;
       sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = 3/" /tmp/train_3epochs.gin;
-      torchrun --standalone --nproc_per_node=1 proposed_2-mmoe_ple/train/main.py
-      --gin_config_file /tmp/train_3epochs.gin
-      --data_path ${{inputs.seqview}}/train
-      --ads_semantic_embd_path ${{inputs.embeddings}}/domain_0
-      --web_browsing_semantic_embd_path ${{inputs.embeddings}}/domain_1
-      --shopping_semantic_embd_path ${{inputs.embeddings}}/domain_2
-      --ads_pure_corpus_embd_path ${{inputs.embeddings}}/domain_3
-      --other_semantic_embd_path ${{inputs.embeddings}}/domain_4
-      --output_path ${{outputs.model}}
-      --mode job
-      --run_id pconv_10shard_3epoch;
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true; cd proposed_2-mmoe_ple/train; torchrun --nproc_per_node=8 main.py
+      --gin_config_file=/tmp/train_3epochs.gin
+      --data_path=${{inputs.seqview}}/train
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+      --output_path=${{outputs.model}}
+      --mode=job
+      --run_id=pconv_10shard_3epoch;
       '
 
   evaluate_model:
@@ -336,11 +336,11 @@ jobs:
     display_name: eval-model-smoke-v3
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
-      instance_type: Singularity.ND40rs_v2_SSD_v4-1
+      instance_type: Singularity.ND96rs_v4
       properties:
         s_vc: ads-relevance
         sla_tier: Premium
-    environment: azureml:recsys-cu121-torch24-transformers:25
+    environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
       seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
@@ -359,16 +359,16 @@ jobs:
       if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi;
       if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi;
       echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt;
-      torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
-      --gin_config_file /tmp/eval_3epochs.gin
-      --data_path ${{inputs.seqview}}/eval
-      --ckpt_path "$CKPT"
-      --ads_semantic_embd_path ${{inputs.embeddings}}/domain_0
-      --web_browsing_semantic_embd_path ${{inputs.embeddings}}/domain_1
-      --shopping_semantic_embd_path ${{inputs.embeddings}}/domain_2
-      --ads_pure_corpus_embd_path ${{inputs.embeddings}}/domain_3
-      --other_semantic_embd_path ${{inputs.embeddings}}/domain_4
-      --eval_batches 100
-      --output_json ${{outputs.eval}}/eval_per_event_type.json
-      --mode job;
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true; torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
+      --gin_config_file=/tmp/eval_3epochs.gin
+      --data_path=${{inputs.seqview}}/eval
+      --ckpt_path="$CKPT"
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+      --eval_batches=100
+      --output_json=${{outputs.eval}}/eval_per_event_type.json
+      --mode=job;
       '
