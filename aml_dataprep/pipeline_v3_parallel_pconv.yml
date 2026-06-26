@@ -54,6 +54,18 @@ outputs:
     type: uri_folder
     mode: rw_mount
     path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/seqview_metadata
+  embeddings:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/embeddings
+  train_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/train_output
+  eval_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/${{parent.inputs.data_version}}/${{parent.inputs.layout_version}}/eval_output
 
 jobs:
   discover_raw_shards:
@@ -258,3 +270,105 @@ jobs:
       --vocab_dir ${{inputs.vocab}}
       --output_dir ${{outputs.metadata}}
       --mode all_events
+
+  encode_embeddings:
+    type: command
+    display_name: encode-embeddings-smoke-v3
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND40rs_v2_SSD_v4-1
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    environment: azureml:recsys-cu121-torch24-transformers:25
+    code: ..
+    inputs:
+      vocab: ${{parent.jobs.vocab_finalize_parallel_fanout_boundary.outputs.vocab}}
+      seqview_metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
+    outputs:
+      embeddings: ${{parent.outputs.embeddings}}
+    command: >-
+      torchrun --nproc_per_node=1 aml_dataprep/encode_embeddings_multigpu_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.embeddings}}
+      --domains 0,1,2,3,4
+      --batch_size 256
+      --model_name sentence-transformers/all-MiniLM-L6-v2
+      --emb_dim 384
+
+  train_3_epochs:
+    type: command
+    display_name: train-3-epochs-smoke-v3
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND40rs_v2_SSD_v4-1
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    environment: azureml:recsys-cu121-torch24-transformers:25
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
+      seqview_metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
+      embeddings: ${{parent.jobs.encode_embeddings.outputs.embeddings}}
+    outputs:
+      model: ${{parent.outputs.train_output}}
+    command: >-
+      bash -lc '
+      set -euo pipefail;
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_3epochs.gin;
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = 3/" /tmp/train_3epochs.gin;
+      torchrun --standalone --nproc_per_node=1 proposed_2-mmoe_ple/train/main.py
+      --gin_config_file /tmp/train_3epochs.gin
+      --data_path ${{inputs.seqview}}/train
+      --ads_semantic_embd_path ${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path ${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path ${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path ${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path ${{inputs.embeddings}}/domain_4
+      --output_path ${{outputs.model}}
+      --mode job
+      --run_id pconv_10shard_3epoch;
+      '
+
+  evaluate_model:
+    type: command
+    display_name: eval-model-smoke-v3
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND40rs_v2_SSD_v4-1
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    environment: azureml:recsys-cu121-torch24-transformers:25
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet_parallel_fanout_boundary.outputs.seqview}}
+      seqview_metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
+      embeddings: ${{parent.jobs.encode_embeddings.outputs.embeddings}}
+      model: ${{parent.jobs.train_3_epochs.outputs.model}}
+    outputs:
+      eval: ${{parent.outputs.eval_output}}
+    command: >-
+      bash -lc '
+      set -euo pipefail;
+      mkdir -p ${{outputs.eval}};
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/eval_3epochs.gin;
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = 3/" /tmp/eval_3epochs.gin;
+      CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1);
+      if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi;
+      if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi;
+      echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt;
+      torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
+      --gin_config_file /tmp/eval_3epochs.gin
+      --data_path ${{inputs.seqview}}/eval
+      --ckpt_path "$CKPT"
+      --ads_semantic_embd_path ${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path ${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path ${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path ${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path ${{inputs.embeddings}}/domain_4
+      --eval_batches 100
+      --output_json ${{outputs.eval}}/eval_per_event_type.json
+      --mode job;
+      '
