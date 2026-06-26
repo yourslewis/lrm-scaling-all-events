@@ -30,8 +30,6 @@ jobs:
     type: command
     display_name: train-only-configurable-epochs-from-saved-prep-embeddings
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
-    identity:
-      type: user_identity
     resources:
       instance_type: Singularity.ND96rs_v4
       properties:
@@ -42,15 +40,12 @@ jobs:
     inputs:
       seqview:
         type: uri_folder
-        mode: download
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
       seqview_metadata:
         type: uri_folder
-        mode: download
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
       embeddings:
         type: uri_folder
-        mode: download
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
       num_epochs: ${{parent.inputs.num_epochs}}
     outputs:
@@ -77,8 +72,6 @@ jobs:
     type: command
     display_name: eval-only-from-train-output
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
-    identity:
-      type: user_identity
     resources:
       instance_type: Singularity.ND96rs_v4
       properties:
@@ -89,15 +82,12 @@ jobs:
     inputs:
       seqview:
         type: uri_folder
-        mode: download
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
       seqview_metadata:
         type: uri_folder
-        mode: download
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
       embeddings:
         type: uri_folder
-        mode: download
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
       model: ${{parent.jobs.train.outputs.model}}
       num_epochs: ${{parent.inputs.num_epochs}}
