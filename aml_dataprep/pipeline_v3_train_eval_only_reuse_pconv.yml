@@ -15,11 +15,11 @@ outputs:
   train_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only/neat_jackal_xx387zbfbz/epochs_param/train_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_cpu/neat_jackal_xx387zbfbz/epochs_param/train_output
   eval_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only/neat_jackal_xx387zbfbz/epochs_param/eval_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_cpu/neat_jackal_xx387zbfbz/epochs_param/eval_output
 
 settings:
   default_datastore: azureml:workspaceblobstore
@@ -29,12 +29,9 @@ jobs:
   train:
     type: command
     display_name: train-only-configurable-epochs-from-saved-prep-embeddings
-    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
-    resources:
-      instance_type: Singularity.ND96rs_v4
-      properties:
-        s_vc: ads-relevance
-        sla_tier: Premium
+    compute: azureml:CPU-ECONVDDA
+    identity:
+      type: user_identity
     environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
@@ -56,7 +53,7 @@ jobs:
       cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_epochs.gin &&
       sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_epochs.gin &&
       cd proposed_2-mmoe_ple/train &&
-      torchrun --nproc_per_node=8 main.py
+      torchrun --standalone --nproc_per_node=1 main.py
       --gin_config_file=/tmp/train_epochs.gin
       --data_path=${{inputs.seqview}}/train
       --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
@@ -71,12 +68,9 @@ jobs:
   evaluate:
     type: command
     display_name: eval-only-from-train-output
-    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
-    resources:
-      instance_type: Singularity.ND96rs_v4
-      properties:
-        s_vc: ads-relevance
-        sla_tier: Premium
+    compute: azureml:CPU-ECONVDDA
+    identity:
+      type: user_identity
     environment: azureml:lrm-gpu-env:1
     code: ..
     inputs:
