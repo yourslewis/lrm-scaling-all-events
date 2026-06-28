@@ -45,7 +45,7 @@ from trainer.train import Trainer
 from trainer.util import make_model
 try:
     import mlflow
-    HAS_MLFLOW = True
+    HAS_MLFLOW = os.environ.get("DISABLE_MLFLOW", "0") != "1"
 except ImportError:
     HAS_MLFLOW = False
 import fsspec

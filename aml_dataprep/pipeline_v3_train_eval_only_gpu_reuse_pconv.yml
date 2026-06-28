@@ -1,0 +1,125 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+
+type: pipeline
+display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16
+experiment_name: lrm-l800-pconv-v3-train-eval-gpu
+
+description: >-
+  GPU train/eval-only test for L800 pconv using completed prep + encode_embedding outputs.
+  Does not rerun raw/vocab/seqview/embedding prep.
+
+inputs:
+  num_epochs: 1
+
+outputs:
+  train_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16/neat_jackal_xx387zbfbz/train_output
+  eval_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16/neat_jackal_xx387zbfbz/eval_output
+
+settings:
+  default_datastore: azureml:workspaceblobstore
+  continue_on_step_failure: false
+
+jobs:
+  train:
+    type: command
+    display_name: train-gpu-bs16-from-existing-seqview-embeddings
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    environment: azureml:lrm-gpu-env:1
+    code: ..
+    inputs:
+      seqview:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
+      seqview_metadata:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
+      embeddings:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
+      num_epochs: ${{parent.inputs.num_epochs}}
+    outputs:
+      model: ${{parent.outputs.train_output}}
+    command: >-
+      set -e &&
+      cp proposed_2-mmoe_ple/requirements.txt /tmp/gpu_requirements.txt &&
+      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==1.2.0/' /tmp/gpu_requirements.txt &&
+      (pip install -q -r /tmp/gpu_requirements.txt 2>/dev/null || true) &&
+      python -c "import torch, fbgemm_gpu; assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok', torch.cuda.device_count())" &&
+      export DISABLE_MLFLOW=1 &&
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_gpu.gin &&
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_gpu.gin &&
+      sed -i "s/Trainer.local_batch_size = [0-9][0-9]*/Trainer.local_batch_size = 16/" /tmp/train_gpu.gin &&
+      sed -i "s/Trainer.eval_batch_size = [0-9][0-9]*/Trainer.eval_batch_size = 32/" /tmp/train_gpu.gin &&
+      sed -i "s/Trainer.eval_every_n_steps = [0-9][0-9]*/Trainer.eval_every_n_steps = 0/" /tmp/train_gpu.gin &&
+      cd proposed_2-mmoe_ple/train &&
+      torchrun --standalone --nproc_per_node=8 main.py
+      --gin_config_file=/tmp/train_gpu.gin
+      --master_port=29500
+      --mode=job
+      --model_save_path=${{outputs.model}}
+      --data_path=${{inputs.seqview}}
+      --metadata_path=${{inputs.seqview_metadata}}/metadata.json
+      --semantic_id_embedding_path=${{inputs.embeddings}}
+
+  eval:
+    type: command
+    display_name: eval-gpu-bs16-from-train-output
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    environment: azureml:lrm-gpu-env:1
+    code: ..
+    inputs:
+      seqview:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
+      seqview_metadata:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
+      embeddings:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
+      model: ${{parent.jobs.train.outputs.model}}
+      num_epochs: ${{parent.inputs.num_epochs}}
+    outputs:
+      eval: ${{parent.outputs.eval_output}}
+    command: >-
+      set -e &&
+      cp proposed_2-mmoe_ple/requirements.txt /tmp/gpu_requirements.txt &&
+      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==1.2.0/' /tmp/gpu_requirements.txt &&
+      (pip install -q -r /tmp/gpu_requirements.txt 2>/dev/null || true) &&
+      python -c "import torch, fbgemm_gpu; assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok', torch.cuda.device_count())" &&
+      export DISABLE_MLFLOW=1 &&
+      mkdir -p ${{outputs.eval}} &&
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/eval_gpu.gin &&
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/eval_gpu.gin &&
+      sed -i "s/Trainer.local_batch_size = [0-9][0-9]*/Trainer.local_batch_size = 16/" /tmp/eval_gpu.gin &&
+      sed -i "s/Trainer.eval_batch_size = [0-9][0-9]*/Trainer.eval_batch_size = 32/" /tmp/eval_gpu.gin &&
+      sed -i "s/Trainer.eval_every_n_steps = [0-9][0-9]*/Trainer.eval_every_n_steps = 0/" /tmp/eval_gpu.gin &&
+      CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1) &&
+      if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi &&
+      if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}"; find ${{inputs.model}} -maxdepth 5 -type f | head -50; exit 1; fi &&
+      echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
+      export PYTHONPATH="$PWD/proposed_2-mmoe_ple/train:$PWD/proposed_2-mmoe_ple:$PYTHONPATH" &&
+      torchrun --standalone --nproc_per_node=8 eval/eval_per_event_type.py
+      --gin_config_file=/tmp/eval_gpu.gin
+      --master_port=29501
+      --checkpoint_path=$CKPT
+      --data_path=${{inputs.seqview}}
+      --metadata_path=${{inputs.seqview_metadata}}/metadata.json
+      --semantic_id_embedding_path=${{inputs.embeddings}}
+      --output_dir=${{outputs.eval}}

@@ -235,11 +235,16 @@ def main(argv):
     gin.parse_config_file(FLAGS.gin_config_file, skip_unknown=True)
 
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
-    torch.cuda.set_device(device)
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
+        backend = "nccl"
+    else:
+        logging.warning("CUDA is not available; running eval on CPU with gloo backend")
+        backend = "gloo"
 
     # Init dist (required by some model components)
     if not dist.is_initialized():
-        dist.init_process_group(backend="nccl", rank=rank, world_size=world_size)
+        dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
 
     dataset = get_reco_dataset(
         mode=FLAGS.mode,

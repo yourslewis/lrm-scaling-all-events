@@ -48,7 +48,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 try:
     import mlflow
-    HAS_MLFLOW = True
+    HAS_MLFLOW = os.environ.get("DISABLE_MLFLOW", "0") != "1"
 except ImportError:
     HAS_MLFLOW = False
 from collections import defaultdict
@@ -109,7 +109,7 @@ class Trainer:
         scheduler_type: str = "none",  # "none" | "cosine" | "linear_warmup_cosine"
     ):
         self.local_rank = local_rank
-        self.device = local_rank
+        self.device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
         self.rank = rank
         self.world_size = world_size
         self.dataset = dataset
@@ -151,10 +151,14 @@ class Trainer:
         self.setup()
 
     def ddp_setup(self) -> None:
-        torch.cuda.set_device(self.local_rank)  # This ensures each process uses the correct GPU
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        if torch.cuda.is_available():
+            torch.cuda.set_device(self.local_rank)  # This ensures each process uses the correct GPU
+        else:
+            logging.warning("CUDA is not available; running single-process CPU train/eval smoke path with gloo backend")
         dist.init_process_group(
-            backend="nccl", 
-            rank=self.rank, 
+            backend=backend,
+            rank=self.rank,
             world_size=self.world_size,
             timeout=dt.timedelta(minutes=30)
         )
@@ -310,15 +314,17 @@ class Trainer:
                     self._model_unwrapped.negatives_sampler['eval'].rotate()
 
                     logging.info(f"running evaluation (method={self.eval_method})")
-                    torch.cuda.synchronize()
-                    torch.cuda.empty_cache()
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                        torch.cuda.empty_cache()
                     validation_metrics = self.evaluate(
                         batch_id, 
                         epoch
                     )
                     if self.rank == 0:
                         self._update_validation_monitor(batch_id, epoch, validation_metrics)
-                    torch.cuda.empty_cache()
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                     
                     self.model.train()
 
@@ -368,7 +374,19 @@ class Trainer:
                             logging.info(f"{k}:{v}")
                 self.opt.step()
                 batch_id += 1
+
+                smoke_max_batches = int(os.environ.get("SMOKE_MAX_TRAIN_BATCHES", "0") or "0")
+                if smoke_max_batches > 0 and batch_id >= smoke_max_batches:
+                    logging.info(f"SMOKE_MAX_TRAIN_BATCHES={smoke_max_batches} reached at batch {batch_id}; ending train loop")
+                    break
+            smoke_max_batches = int(os.environ.get("SMOKE_MAX_TRAIN_BATCHES", "0") or "0")
+            if smoke_max_batches > 0 and batch_id >= smoke_max_batches:
+                break
         
+
+        if self.rank == 0 and batch_id > self.batches_run:
+            logging.info(f"Saving final training snapshot at batch {batch_id}")
+            self._save_snapshot(batch_id)
 
         if self.rank == 0:
             if self.writer is not None:

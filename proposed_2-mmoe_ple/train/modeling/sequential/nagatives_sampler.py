@@ -1,4 +1,5 @@
 import abc
+import os
 import torch
 from typing import List, Optional, Tuple, Dict
 from modeling.sequential.embedding_modules import EmbeddingModule
@@ -219,7 +220,20 @@ class InBatchNegativesSampler(NegativesSampler):
             (positive_ids.unsqueeze(-1) != self._cached_ids.unsqueeze(0))
 
         probs = mask.float()
-        row_sums = probs.sum(dim=-1, keepdim=True).clamp_min(1)
+        row_sums = probs.sum(dim=-1, keepdim=True)
+        if os.environ.get("SMOKE_ALLOW_NEGATIVE_FALLBACK", "0") == "1" and bool((row_sums <= 0).any()):
+            # Tiny CPU smoke batches can contain only positives from the same
+            # sequence, making the normal in-batch negative mask empty. For the
+            # smoke path only, relax to item-only negatives; if that is still
+            # empty, sample uniformly so train/eval plumbing can be exercised.
+            item_only_mask = positive_ids.unsqueeze(-1) != self._cached_ids.unsqueeze(0)
+            fallback_probs = item_only_mask.float()
+            fallback_sums = fallback_probs.sum(dim=-1, keepdim=True)
+            all_candidates = torch.ones_like(fallback_probs)
+            fallback_probs = torch.where(fallback_sums > 0, fallback_probs, all_candidates)
+            probs = torch.where(row_sums > 0, probs, fallback_probs)
+            row_sums = probs.sum(dim=-1, keepdim=True)
+        row_sums = row_sums.clamp_min(1)
         probs = probs / row_sums
 
         sampled_offsets = torch.multinomial(probs, num_samples=num_to_sample, replacement=True)
