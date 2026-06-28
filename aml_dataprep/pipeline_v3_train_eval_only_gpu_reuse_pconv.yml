@@ -1,6 +1,7 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
 
 type: pipeline
+name: pconv_gpu_train_eval_bs16_20260628a
 display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16
 experiment_name: lrm-l800-pconv-v3-train-eval-gpu
 
@@ -15,11 +16,11 @@ outputs:
   train_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16/neat_jackal_xx387zbfbz/train_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628a/neat_jackal_xx387zbfbz/train_output
   eval_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16/neat_jackal_xx387zbfbz/eval_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628a/neat_jackal_xx387zbfbz/eval_output
 
 settings:
   default_datastore: azureml:workspaceblobstore
