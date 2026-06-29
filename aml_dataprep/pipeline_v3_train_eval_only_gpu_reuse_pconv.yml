@@ -1,8 +1,8 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
 
 type: pipeline
-name: pconv_gpu_train_eval_bs16_20260628b
-display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16-fbgemm060
+name: pconv_gpu_train_eval_bs16_20260629a
+display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16-fbgemm060-pytrun
 experiment_name: lrm-l800-pconv-v3-train-eval-gpu
 
 description: >-
@@ -16,11 +16,11 @@ outputs:
   train_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628b/neat_jackal_xx387zbfbz/train_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260629a/neat_jackal_xx387zbfbz/train_output
   eval_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628b/neat_jackal_xx387zbfbz/eval_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260629a/neat_jackal_xx387zbfbz/eval_output
 
 settings:
   default_datastore: azureml:workspaceblobstore
@@ -64,14 +64,16 @@ jobs:
       sed -i "s/Trainer.eval_batch_size = [0-9][0-9]*/Trainer.eval_batch_size = 32/" /tmp/train_gpu.gin &&
       sed -i "s/Trainer.eval_every_n_steps = [0-9][0-9]*/Trainer.eval_every_n_steps = 0/" /tmp/train_gpu.gin &&
       cd proposed_2-mmoe_ple/train &&
-      torchrun --standalone --nproc_per_node=8 main.py
+      python -m torch.distributed.run --standalone --nproc_per_node=8 --master_port=29500 main.py
       --gin_config_file=/tmp/train_gpu.gin
-      --master_port=29500
       --mode=job
-      --model_save_path=${{outputs.model}}
       --data_path=${{inputs.seqview}}
-      --metadata_path=${{inputs.seqview_metadata}}/metadata.json
-      --semantic_id_embedding_path=${{inputs.embeddings}}
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+      --output_path=${{outputs.model}}
 
   eval:
     type: command
@@ -116,11 +118,15 @@ jobs:
       if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}"; find ${{inputs.model}} -maxdepth 5 -type f | head -50; exit 1; fi &&
       echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
       export PYTHONPATH="$PWD/proposed_2-mmoe_ple/train:$PWD/proposed_2-mmoe_ple:$PYTHONPATH" &&
-      torchrun --standalone --nproc_per_node=8 eval/eval_per_event_type.py
+      python -m torch.distributed.run --standalone --nproc_per_node=1 --master_port=29501 eval/eval_per_event_type.py
       --gin_config_file=/tmp/eval_gpu.gin
-      --master_port=29501
-      --checkpoint_path=$CKPT
       --data_path=${{inputs.seqview}}
-      --metadata_path=${{inputs.seqview_metadata}}/metadata.json
-      --semantic_id_embedding_path=${{inputs.embeddings}}
-      --output_dir=${{outputs.eval}}
+      --ckpt_path="$CKPT"
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+      --eval_batches=100
+      --output_json=${{outputs.eval}}/eval_per_event_type.json
+      --mode=job
