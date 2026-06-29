@@ -1,8 +1,8 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
 
 type: pipeline
-name: pconv_gpu_train_eval_bs16_20260628a
-display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16
+name: pconv_gpu_train_eval_bs16_20260628b
+display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16-fbgemm060
 experiment_name: lrm-l800-pconv-v3-train-eval-gpu
 
 description: >-
@@ -16,11 +16,11 @@ outputs:
   train_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628a/neat_jackal_xx387zbfbz/train_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628b/neat_jackal_xx387zbfbz/train_output
   eval_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628a/neat_jackal_xx387zbfbz/eval_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260628b/neat_jackal_xx387zbfbz/eval_output
 
 settings:
   default_datastore: azureml:workspaceblobstore
@@ -54,9 +54,9 @@ jobs:
     command: >-
       set -e &&
       cp proposed_2-mmoe_ple/requirements.txt /tmp/gpu_requirements.txt &&
-      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==1.2.0/' /tmp/gpu_requirements.txt &&
-      (pip install -q -r /tmp/gpu_requirements.txt 2>/dev/null || true) &&
-      python -c "import torch, fbgemm_gpu; assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok', torch.cuda.device_count())" &&
+      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==0.6.0/' /tmp/gpu_requirements.txt &&
+      pip install -q -r /tmp/gpu_requirements.txt &&
+      python -c "import torch, fbgemm_gpu; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'gpus', torch.cuda.device_count()); assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok')" &&
       export DISABLE_MLFLOW=1 &&
       cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_gpu.gin &&
       sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_gpu.gin &&
@@ -101,9 +101,9 @@ jobs:
     command: >-
       set -e &&
       cp proposed_2-mmoe_ple/requirements.txt /tmp/gpu_requirements.txt &&
-      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==1.2.0/' /tmp/gpu_requirements.txt &&
-      (pip install -q -r /tmp/gpu_requirements.txt 2>/dev/null || true) &&
-      python -c "import torch, fbgemm_gpu; assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok', torch.cuda.device_count())" &&
+      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==0.6.0/' /tmp/gpu_requirements.txt &&
+      pip install -q -r /tmp/gpu_requirements.txt &&
+      python -c "import torch, fbgemm_gpu; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'gpus', torch.cuda.device_count()); assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok')" &&
       export DISABLE_MLFLOW=1 &&
       mkdir -p ${{outputs.eval}} &&
       cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/eval_gpu.gin &&
