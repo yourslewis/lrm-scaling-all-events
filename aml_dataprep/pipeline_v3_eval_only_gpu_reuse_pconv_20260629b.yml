@@ -1,83 +1,32 @@
 $schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
 
 type: pipeline
-name: pconv_gpu_train_eval_bs16_20260629a
-display_name: lrm-l800-pconv-v3-train-eval-only-gpu-reuse-bs16-fbgemm060-pytrun
+name: pconv_gpu_eval_only_bs16_20260629b
+display_name: lrm-l800-pconv-v3-eval-only-gpu-reuse-bs16-fbgemm060-model-download
 experiment_name: lrm-l800-pconv-v3-train-eval-gpu
 
 description: >-
-  GPU train/eval-only test for L800 pconv using completed prep + encode_embedding outputs.
-  Does not rerun raw/vocab/seqview/embedding prep.
+  GPU eval-only retry for L800 pconv using completed train output from
+  pconv_gpu_train_eval_bs16_20260629a. Avoids rerunning train; downloads the
+  model input instead of mounting the wasbs-backed parent output on Singularity.
 
 inputs:
   num_epochs: 1
 
 outputs:
-  train_output:
-    type: uri_folder
-    mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260629a/neat_jackal_xx387zbfbz/train_output
   eval_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260629a/neat_jackal_xx387zbfbz/eval_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/eval_only_gpu_bs16_20260629b/neat_jackal_xx387zbfbz/eval_output
 
 settings:
   default_datastore: azureml:workspaceblobstore
   continue_on_step_failure: false
 
 jobs:
-  train:
-    type: command
-    display_name: train-gpu-bs16-from-existing-seqview-embeddings
-    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
-    resources:
-      instance_type: Singularity.ND96rs_v4
-      properties:
-        s_vc: ads-relevance
-        sla_tier: Premium
-    environment: azureml:lrm-gpu-env:1
-    code: ..
-    inputs:
-      seqview:
-        type: uri_folder
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
-      seqview_metadata:
-        type: uri_folder
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
-      embeddings:
-        type: uri_folder
-        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
-      num_epochs: ${{parent.inputs.num_epochs}}
-    outputs:
-      model: ${{parent.outputs.train_output}}
-    command: >-
-      set -e &&
-      cp proposed_2-mmoe_ple/requirements.txt /tmp/gpu_requirements.txt &&
-      sed -i 's/fbgemm-gpu-cpu==0.6.0/fbgemm-gpu==0.6.0/' /tmp/gpu_requirements.txt &&
-      pip install -q -r /tmp/gpu_requirements.txt &&
-      python -c "import torch, fbgemm_gpu; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'gpus', torch.cuda.device_count()); assert torch.cuda.is_available(), 'CUDA unavailable on GPU job'; assert hasattr(torch.ops.fbgemm, 'jagged_2d_to_dense'), 'missing torch.ops.fbgemm.jagged_2d_to_dense'; print('gpu/fbgemm preflight ok')" &&
-      export DISABLE_MLFLOW=1 &&
-      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_gpu.gin &&
-      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_gpu.gin &&
-      sed -i "s/Trainer.local_batch_size = [0-9][0-9]*/Trainer.local_batch_size = 16/" /tmp/train_gpu.gin &&
-      sed -i "s/Trainer.eval_batch_size = [0-9][0-9]*/Trainer.eval_batch_size = 32/" /tmp/train_gpu.gin &&
-      sed -i "s/Trainer.eval_every_n_steps = [0-9][0-9]*/Trainer.eval_every_n_steps = 0/" /tmp/train_gpu.gin &&
-      cd proposed_2-mmoe_ple/train &&
-      python -m torch.distributed.run --standalone --nproc_per_node=8 --master_port=29500 main.py
-      --gin_config_file=/tmp/train_gpu.gin
-      --mode=job
-      --data_path=${{inputs.seqview}}
-      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
-      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
-      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
-      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
-      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
-      --output_path=${{outputs.model}}
-
   eval:
     type: command
-    display_name: eval-gpu-bs16-from-train-output
+    display_name: eval-gpu-bs16-from-20260629a-train-output
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
       instance_type: Singularity.ND96rs_v4
@@ -98,7 +47,7 @@ jobs:
         path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
       model:
         type: uri_folder
-        path: ${{parent.jobs.train.outputs.model}}
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_gpu_bs16_20260629a/neat_jackal_xx387zbfbz/train_output
         mode: download
       num_epochs: ${{parent.inputs.num_epochs}}
     outputs:
