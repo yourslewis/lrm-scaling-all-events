@@ -9,6 +9,8 @@ from pathlib import Path
 
 GPU_COMPUTE = "/subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40"
 GPU_INSTANCE_TYPE = "Singularity.ND96rs_v4"
+CPU_ENV = "azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2"
+GPU_ENV = "azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-gpu-env/versions/1"
 
 
 def emit(lines: list[str], text: str = "") -> None:
@@ -24,19 +26,7 @@ def command_block(lines: list[str], command: str, indent: int = 4) -> None:
 
 def cpu_env(lines: list[str], indent: int = 4, parquet: bool = False) -> None:
     pad = " " * indent
-    emit(lines, f"{pad}environment:")
-    emit(lines, f"{pad}  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest")
-    emit(lines, f"{pad}  conda_file:")
-    emit(lines, f"{pad}    name: pconv-10x-v2-cpu")
-    emit(lines, f"{pad}    channels: [conda-forge]")
-    emit(lines, f"{pad}    dependencies:")
-    emit(lines, f"{pad}      - python=3.10")
-    if parquet:
-        emit(lines, f"{pad}      - pip")
-        emit(lines, f"{pad}      - pip:")
-        emit(lines, f"{pad}          - numpy")
-        emit(lines, f"{pad}          - pandas")
-        emit(lines, f"{pad}          - pyarrow")
+    emit(lines, f"{pad}environment: {CPU_ENV}")
 
 
 def add_output(lines: list[str], name: str, root: str, suffix: str) -> None:
@@ -62,7 +52,7 @@ def add_command_job(lines: list[str], name: str, display: str, compute: str, inp
         emit(lines, "      properties:")
         emit(lines, "        s_vc: ads-relevance")
         emit(lines, "        sla_tier: Premium")
-        emit(lines, "    environment: azureml:lrm-gpu-env:1")
+        emit(lines, f"    environment: {GPU_ENV}")
     elif env:
         emit(lines, f"    environment: {env}")
     else:
@@ -86,6 +76,7 @@ def add_command_job(lines: list[str], name: str, display: str, compute: str, inp
 
 def add_component_job(lines: list[str], name: str, display: str, component: str, compute: str, inputs: dict[str, str], outputs: dict[str, str], *, instance_count: str) -> None:
     emit(lines, f"  {name}:")
+    emit(lines, "    type: command")
     emit(lines, f"    component: {component}")
     emit(lines, f"    display_name: {display}")
     emit(lines, f"    compute: {compute}")

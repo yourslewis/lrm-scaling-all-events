@@ -3,7 +3,7 @@ type: command
 name: pconv_10x_v2_encode_embeddings
 display_name: pconv 10x v2 encode embeddings
 code: ../..
-environment: azureml:lrm-gpu-env:1
+environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-gpu-env/versions/1
 inputs:
   vocab:
     type: uri_folder
