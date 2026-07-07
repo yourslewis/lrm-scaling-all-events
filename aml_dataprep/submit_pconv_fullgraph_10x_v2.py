@@ -24,8 +24,8 @@ def main() -> None:
     p.add_argument(
         "--skip-validation",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Skip AML service-side pipeline validation during create/update; local validation is run before monitor submits.",
+        default=False,
+        help="Skip AML service-side pipeline validation during create/update; only use when the YAML contains fully resolved component references.",
     )
     args = p.parse_args()
 
