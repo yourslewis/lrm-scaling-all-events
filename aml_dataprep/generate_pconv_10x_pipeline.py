@@ -338,7 +338,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--output-root", default="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
     p.add_argument("--cpu-shards", type=int, default=10)
-    p.add_argument("--num-buckets", type=int, default=64)
+    p.add_argument("--num-buckets", type=int, default=1)
     p.add_argument("--gpu-instance-count", type=int, default=1)
     p.add_argument("--allow-multinode-gpu", action="store_true")
     p.add_argument("--eval-batches", type=int, default=100)
