@@ -49,6 +49,8 @@ class PipelineGeneratorTests(unittest.TestCase):
             component_text = Path("aml_dataprep/components/pconv_10x_v2_evaluate.yml").read_text(encoding="utf-8")
             self.assertIn("--eval_batches=${{inputs.eval_batches}}", component_text)
             self.assertIn("gpu_instance_count > 1 is gated", component_text)
+            self.assertNotIn("source_root:", text)
+            self.assertIn("--source_root /data/root", text)
             self.assertIn("output_root: azureml://datastores/workspaceblobstore/paths/derived/test", text)
             self.assertNotIn("cpu_shards:", text)
             self.assertNotIn("cpu_compute:", text)

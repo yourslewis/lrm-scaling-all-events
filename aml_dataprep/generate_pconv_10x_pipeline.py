@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import shlex
 import sys
 from pathlib import Path
 
@@ -126,7 +127,9 @@ def build_yaml(args: argparse.Namespace) -> str:
     emit(lines, "  continue_on_step_failure: false")
     emit(lines)
     emit(lines, "inputs:")
-    emit(lines, f"  source_root: {args.source_root}")
+    # Bake the Cosmos/ADLS root into the discovery command rather than exposing it
+    # as an AML input; AML may pre-bind azureml:// input defaults as uri_folder and
+    # fail before the discovery script can run and emit actionable logs.
     emit(lines, f"  output_root: {root}")
     emit(lines, f"  data_version: {args.data_version}")
     emit(lines, "  layout_version: layout_v1")
@@ -140,13 +143,12 @@ def build_yaml(args: argparse.Namespace) -> str:
     emit(lines)
     emit(lines, "jobs:")
     add_command_job(lines, "discover_raw_shards", "discover-raw-shards-10x-v2", args.cpu_compute, {
-        "source_root": "${{parent.inputs.source_root}}",
         "data_version": "${{parent.inputs.data_version}}",
-    }, {"discovered": "${{parent.outputs.discovered}}"}, """
+    }, {"discovered": "${{parent.outputs.discovered}}"}, f"""
 python aml_dataprep/parallel/discover_raw_shards.py
---source_root ${{inputs.source_root}}
---data_version ${{inputs.data_version}}
---output_dir ${{outputs.discovered}}
+--source_root {shlex.quote(args.source_root)}
+--data_version ${{{{inputs.data_version}}}}
+--output_dir ${{{{outputs.discovered}}}}
 """, env="azureml:lrm-relay-env:2", identity=True)
 
     relay_outputs = []
