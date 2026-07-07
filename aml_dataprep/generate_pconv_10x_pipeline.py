@@ -117,9 +117,6 @@ def build_yaml(args: argparse.Namespace) -> str:
     emit(lines, f"  output_root: {root}")
     emit(lines, f"  data_version: {args.data_version}")
     emit(lines, "  layout_version: layout_v1")
-    emit(lines, f"  cpu_compute: {args.cpu_compute}")
-    emit(lines, f"  cpu_shards: {args.cpu_shards}")
-    emit(lines, f"  num_buckets: {args.num_buckets}")
     emit(lines, f"  gpu_instance_count: {args.gpu_instance_count}")
     emit(lines, f"  num_epochs: {args.epochs}")
     emit(lines, f"  eval_batches: {args.eval_batches}")
@@ -161,6 +158,7 @@ python aml_dataprep/parallel/merge_partition_dirs.py
 --output_dir ${{{{outputs.raw}}}}
 --stage relay
 --expected_count {args.cpu_shards}
+--expected_stage relay --expect_shards --expected_num_shards {args.cpu_shards}
 """)
 
     spill_outputs = []
@@ -188,6 +186,7 @@ python aml_dataprep/parallel/merge_partition_dirs.py
 --output_dir ${{{{outputs.spill}}}}
 --stage vocab_spill
 --expected_count {args.cpu_shards}
+--expected_stage vocab_spill --expect_shards --expected_num_shards {args.cpu_shards}
 """)
 
     reduce_outputs = []
@@ -213,6 +212,7 @@ python aml_dataprep/parallel/merge_partition_dirs.py
 --output_dir ${{{{outputs.reduced}}}}
 --stage vocab_reduce
 --expected_count {len(reduce_outputs)}
+--expected_stage vocab_reduce
 """)
 
     add_command_job(lines, "vocab_prefix_sum", "vocab-prefix-sum", args.cpu_compute, {
@@ -266,6 +266,7 @@ python aml_dataprep/parallel/merge_partition_dirs.py
 --output_dir ${{{{outputs.seqview}}}}
 --stage parquet
 --expected_count {args.cpu_shards}
+--expected_stage parquet --expect_shards --expected_num_shards {args.cpu_shards}
 """)
 
     add_command_job(lines, "check_parquet_ready", "check-parquet-ready", args.cpu_compute, {

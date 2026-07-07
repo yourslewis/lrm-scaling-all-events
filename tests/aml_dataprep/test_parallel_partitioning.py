@@ -86,5 +86,41 @@ class ParallelPartitioningTests(unittest.TestCase):
             self.assertIn("missing ready manifest", proc.stderr)
 
 
+    def test_merge_partition_dirs_rejects_duplicate_shard_ready_manifests(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            tmp_path = Path(d)
+            for part in ("part0", "part1"):
+                ready = tmp_path / part / "_ready"
+                ready.mkdir(parents=True)
+                (ready / f"relay_shard_{0 if part == 'part0' else 1:04d}.json").write_text(
+                    json.dumps({"stage": "relay", "shard_index": 0, "num_shards": 2}) + "\n",
+                    encoding="utf-8",
+                )
+
+            proc = subprocess.run([
+                sys.executable,
+                "aml_dataprep/parallel/merge_partition_dirs.py",
+                "--input_dirs",
+                str(tmp_path / "part0"),
+                str(tmp_path / "part1"),
+                "--output_dir",
+                str(tmp_path / "merged"),
+                "--stage",
+                "relay",
+                "--expected_count",
+                "2",
+                "--expected_stage",
+                "relay",
+                "--expect_shards",
+                "--expected_num_shards",
+                "2",
+            ], text=True, capture_output=True)
+
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("duplicate ready shard_index", proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

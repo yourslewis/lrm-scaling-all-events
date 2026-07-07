@@ -48,6 +48,9 @@ class PipelineGeneratorTests(unittest.TestCase):
             self.assertIn("--eval_batches=${{inputs.eval_batches}}", text)
             self.assertIn("gpu_instance_count > 1 is gated", text)
             self.assertIn("output_root: azureml://datastores/workspaceblobstore/paths/derived/test", text)
+            self.assertNotIn("cpu_shards:", text)
+            self.assertNotIn("cpu_compute:", text)
+            self.assertIn("--expected_stage relay --expect_shards --expected_num_shards 3", text)
 
 
     def test_generator_rejects_multinode_gpu_without_flag(self):

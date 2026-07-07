@@ -16,9 +16,6 @@ inputs:
   output_root: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2
   data_version: v3-20260707-pconv-fullgraph-10x-v2
   layout_version: layout_v1
-  cpu_compute: azureml:CPU-D2ADSV4
-  cpu_shards: 10
-  num_buckets: 64
   gpu_instance_count: 1
   num_epochs: 3
   eval_batches: 100
@@ -306,6 +303,7 @@ jobs:
       --output_dir ${{outputs.raw}}
       --stage relay
       --expected_count 10
+      --expected_stage relay --expect_shards --expected_num_shards 10
 
   vocab_spill_shard_0000:
     type: command
@@ -598,6 +596,7 @@ jobs:
       --output_dir ${{outputs.spill}}
       --stage vocab_spill
       --expected_count 10
+      --expected_stage vocab_spill --expect_shards --expected_num_shards 10
 
   vocab_reduce_d0_b0000:
     type: command
@@ -8300,6 +8299,7 @@ jobs:
       --output_dir ${{outputs.reduced}}
       --stage vocab_reduce
       --expected_count 320
+      --expected_stage vocab_reduce
 
   vocab_prefix_sum:
     type: command
@@ -8712,6 +8712,7 @@ jobs:
       --output_dir ${{outputs.seqview}}
       --stage parquet
       --expected_count 10
+      --expected_stage parquet --expect_shards --expected_num_shards 10
 
   check_parquet_ready:
     type: command

@@ -27,13 +27,13 @@ python aml_dataprep/generate_pconv_10x_pipeline.py \
   --epochs 3
 ```
 
-Key knobs:
+Generation-time knobs:
 
 - `--source-root`: Cosmos/AML datastore root. Defaults to `local/User/wenhlu/LRM_benchmark_v4_10x`.
 - `--output-root`: isolated blob output root. Defaults to `derived/lrm_v4_pconv_v3/full_graph_10x_v2`.
-- `--cpu-compute`: CPU target. Use multi-instance pools such as `azureml:CPU-D2ADSV4` or `azureml:CPU-E8aV4` rather than single-instance `CPU-E32SA`.
-- `--cpu-shards`: number of relay/spill/parquet fan-out jobs. The generated default is 10 for 10x CPU scaling; increase toward available pool capacity for wider fan-out.
-- `--num-buckets`: vocab hash buckets. This controls reduce parallelism as `5 * num_buckets` reduce jobs.
+- `--cpu-compute`: CPU target baked into generated jobs. Regenerate the YAML to change it. Use multi-instance pools such as `azureml:CPU-D2ADSV4` or `azureml:CPU-E8aV4` rather than single-instance `CPU-E32SA`.
+- `--cpu-shards`: number of relay/spill/parquet fan-out jobs baked into the generated DAG. Regenerate the YAML to change fan-out. The generated default is 10 for 10x CPU scaling; increase toward available pool capacity for wider fan-out.
+- `--num-buckets`: vocab hash buckets baked into the generated reduce job matrix. This controls reduce parallelism as `5 * num_buckets` reduce jobs.
 - `--gpu-instance-count`: exposed pipeline parameter. Default is `1`.
 - `--eval-batches`: passed to per-event-type eval.
 - `--epochs`: training epochs written into the temporary gin config.
