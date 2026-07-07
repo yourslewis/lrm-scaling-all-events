@@ -1,0 +1,28 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+type: command
+name: pconv_10x_v2_encode_embeddings
+display_name: pconv 10x v2 encode embeddings
+code: ../..
+environment: azureml:lrm-gpu-env:1
+inputs:
+  vocab:
+    type: uri_folder
+  metadata:
+    type: uri_folder
+  gpu_instance_count:
+    type: integer
+outputs:
+  embeddings:
+    type: uri_folder
+command: >-
+  set -e &&
+  if [ "${{inputs.gpu_instance_count}}" != "1" ]; then echo 'gpu_instance_count > 1 is gated: current torchrun commands are single-node only' >&2; exit 64; fi &&
+  pip install -q "sentence-transformers==5.4.1" &&
+  nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader &&
+  python aml_dataprep/encode_embeddings_multigpu_v3.py
+  --vocab_dir ${{inputs.vocab}}
+  --output_dir ${{outputs.embeddings}}
+  --domains 0,1,2,3,4
+  --batch_size 1024
+  --model_name sentence-transformers/all-MiniLM-L6-v2
+  --emb_dim 384

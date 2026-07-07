@@ -1,0 +1,43 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandComponent.schema.json
+type: command
+name: pconv_10x_v2_evaluate
+display_name: pconv 10x v2 evaluate
+code: ../..
+environment: azureml:lrm-gpu-env:1
+inputs:
+  seqview:
+    type: uri_folder
+  metadata:
+    type: uri_folder
+  embeddings:
+    type: uri_folder
+  model:
+    type: uri_folder
+  eval_batches:
+    type: integer
+  gpu_instance_count:
+    type: integer
+outputs:
+  eval:
+    type: uri_folder
+command: >-
+  set -e &&
+  if [ "${{inputs.gpu_instance_count}}" != "1" ]; then echo 'gpu_instance_count > 1 is gated: current torchrun commands are single-node only' >&2; exit 64; fi &&
+  mkdir -p ${{outputs.eval}} &&
+  (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
+  CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1) &&
+  if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi &&
+  if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi &&
+  echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
+  torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
+  --gin_config_file=proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
+  --data_path=${{inputs.seqview}}/eval
+  --ckpt_path="$CKPT"
+  --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+  --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+  --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+  --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+  --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+  --eval_batches=${{inputs.eval_batches}}
+  --output_json=${{outputs.eval}}/eval_per_event_type.json
+  --mode=job

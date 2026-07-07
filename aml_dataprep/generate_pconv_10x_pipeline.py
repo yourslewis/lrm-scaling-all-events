@@ -83,6 +83,28 @@ def add_command_job(lines: list[str], name: str, display: str, compute: str, inp
     emit(lines)
 
 
+
+def add_component_job(lines: list[str], name: str, display: str, component: str, compute: str, inputs: dict[str, str], outputs: dict[str, str], *, instance_count: str) -> None:
+    emit(lines, f"  {name}:")
+    emit(lines, f"    component: {component}")
+    emit(lines, f"    display_name: {display}")
+    emit(lines, f"    compute: {compute}")
+    emit(lines, "    resources:")
+    emit(lines, f"      instance_type: {GPU_INSTANCE_TYPE}")
+    emit(lines, f"      instance_count: {instance_count}")
+    emit(lines, "      properties:")
+    emit(lines, "        s_vc: ads-relevance")
+    emit(lines, "        sla_tier: Premium")
+    if inputs:
+        emit(lines, "    inputs:")
+        for key, value in inputs.items():
+            emit(lines, f"      {key}: {value}")
+    if outputs:
+        emit(lines, "    outputs:")
+        for key, value in outputs.items():
+            emit(lines, f"      {key}: {value}")
+    emit(lines)
+
 def gpu_guard() -> str:
     return "if [ \"${{inputs.gpu_instance_count}}\" != \"1\" ]; then echo 'gpu_instance_count > 1 is gated: current torchrun commands are single-node only' >&2; exit 64; fi &&"
 
@@ -292,79 +314,28 @@ python aml_dataprep/parallel/aggregate_seqview_manifest.py
 --mode all_events
 """)
 
-    add_command_job(lines, "encode_embeddings", "encode-embeddings-10x-v2", GPU_COMPUTE, {
+    add_component_job(lines, "encode_embeddings", "encode-embeddings-10x-v2", "./components/pconv_10x_v2_encode_embeddings.yml", GPU_COMPUTE, {
         "vocab": "${{parent.jobs.vocab_finalize.outputs.vocab}}",
         "metadata": "${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}",
         "gpu_instance_count": "${{parent.inputs.gpu_instance_count}}",
-    }, {"embeddings": "${{parent.outputs.embeddings}}"}, """
-set -e &&
-{gpu_guard()}
-pip install -q "sentence-transformers==5.4.1" &&
-nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader &&
-python aml_dataprep/encode_embeddings_multigpu_v3.py
---vocab_dir ${{inputs.vocab}}
---output_dir ${{outputs.embeddings}}
---domains 0,1,2,3,4
---batch_size 1024
---model_name sentence-transformers/all-MiniLM-L6-v2
---emb_dim 384
-""", gpu=True, instance_count="${{parent.inputs.gpu_instance_count}}")
+    }, {"embeddings": "${{parent.outputs.embeddings}}"}, instance_count="${{parent.inputs.gpu_instance_count}}")
 
-    add_command_job(lines, "train", "train-10x-v2", GPU_COMPUTE, {
+    add_component_job(lines, "train", "train-10x-v2", "./components/pconv_10x_v2_train.yml", GPU_COMPUTE, {
         "seqview": "${{parent.jobs.merge_seqview.outputs.seqview}}",
         "metadata": "${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}",
         "embeddings": "${{parent.jobs.encode_embeddings.outputs.embeddings}}",
         "num_epochs": "${{parent.inputs.num_epochs}}",
         "gpu_instance_count": "${{parent.inputs.gpu_instance_count}}",
-    }, {"model": "${{parent.outputs.train_output}}"}, """
-set -e &&
-{gpu_guard()}
-(pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
-cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_10x_v2.gin &&
-sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_10x_v2.gin &&
-cd proposed_2-mmoe_ple/train &&
-torchrun --nproc_per_node=8 main.py
---gin_config_file=/tmp/train_10x_v2.gin
---data_path=${{inputs.seqview}}/train
---ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
---web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
---shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
---ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
---other_semantic_embd_path=${{inputs.embeddings}}/domain_4
---output_path=${{outputs.model}}
---mode=job
---run_id=pconv_fullgraph_10x_v2
-""", gpu=True, instance_count="${{parent.inputs.gpu_instance_count}}")
+    }, {"model": "${{parent.outputs.train_output}}"}, instance_count="${{parent.inputs.gpu_instance_count}}")
 
-    add_command_job(lines, "evaluate", "eval-10x-v2", GPU_COMPUTE, {
+    add_component_job(lines, "evaluate", "eval-10x-v2", "./components/pconv_10x_v2_evaluate.yml", GPU_COMPUTE, {
         "seqview": "${{parent.jobs.merge_seqview.outputs.seqview}}",
         "metadata": "${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}",
         "embeddings": "${{parent.jobs.encode_embeddings.outputs.embeddings}}",
         "model": "${{parent.jobs.train.outputs.model}}",
         "eval_batches": "${{parent.inputs.eval_batches}}",
         "gpu_instance_count": "${{parent.inputs.gpu_instance_count}}",
-    }, {"eval": "${{parent.outputs.eval_output}}"}, """
-set -e &&
-{gpu_guard()}
-mkdir -p ${{outputs.eval}} &&
-(pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
-CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1) &&
-if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi &&
-if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi &&
-echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
-torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
---gin_config_file=proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
---data_path=${{inputs.seqview}}/eval
---ckpt_path="$CKPT"
---ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
---web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
---shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
---ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
---other_semantic_embd_path=${{inputs.embeddings}}/domain_4
---eval_batches=${{inputs.eval_batches}}
---output_json=${{outputs.eval}}/eval_per_event_type.json
---mode=job
-""", gpu=True, instance_count="${{parent.inputs.gpu_instance_count}}")
+    }, {"eval": "${{parent.outputs.eval_output}}"}, instance_count="${{parent.inputs.gpu_instance_count}}")
     return "\n".join(lines) + "\n"
 
 
@@ -376,7 +347,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--output-root", default="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
     p.add_argument("--cpu-shards", type=int, default=10)
-    p.add_argument("--num-buckets", type=int, default=4096)
+    p.add_argument("--num-buckets", type=int, default=64)
     p.add_argument("--gpu-instance-count", type=int, default=1)
     p.add_argument("--allow-multinode-gpu", action="store_true")
     p.add_argument("--eval-batches", type=int, default=100)

@@ -33,9 +33,17 @@ def static_validate(path: Path) -> list[str]:
     parquet = len(re.findall(r"^  parquet_shard_\d{4}:", text, re.MULTILINE))
     if relay == 0 or relay != parquet:
         errors.append(f"relay/parquet shard mismatch: relay={relay} parquet={parquet}")
-    if "gpu_instance_count > 1 is gated" not in text:
+    component_paths = re.findall(r"component: (\./components/[^\s]+\.yml)", text)
+    component_text = ""
+    for component_path in component_paths:
+        full_path = path.parent / component_path[2:]
+        if not full_path.exists():
+            errors.append(f"missing referenced component {component_path}")
+            continue
+        component_text += "\n" + full_path.read_text(encoding="utf-8")
+    if "gpu_instance_count > 1 is gated" not in (text + component_text):
         errors.append("missing gpu multi-node guard")
-    if "{gpu_guard()}" in text:
+    if "{gpu_guard()}" in (text + component_text):
         errors.append("unexpanded gpu guard placeholder remains")
     if "parent.jobs.aggregate_seqview_manifest.outputs.metadata" not in text:
         errors.append("train/eval dependency on aggregate metadata missing")

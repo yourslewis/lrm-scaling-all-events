@@ -8764,7 +8764,7 @@ jobs:
       --mode all_events
 
   encode_embeddings:
-    type: command
+    component: ./components/pconv_10x_v2_encode_embeddings.yml
     display_name: encode-embeddings-10x-v2
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
@@ -8773,29 +8773,15 @@ jobs:
       properties:
         s_vc: ads-relevance
         sla_tier: Premium
-    environment: azureml:lrm-gpu-env:1
-    code: ..
     inputs:
       vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
       metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
       gpu_instance_count: ${{parent.inputs.gpu_instance_count}}
     outputs:
       embeddings: ${{parent.outputs.embeddings}}
-    command: >-
-      set -e &&
-      if [ "${{inputs.gpu_instance_count}}" != "1" ]; then echo 'gpu_instance_count > 1 is gated: current torchrun commands are single-node only' >&2; exit 64; fi &&
-      pip install -q "sentence-transformers==5.4.1" &&
-      nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader &&
-      python aml_dataprep/encode_embeddings_multigpu_v3.py
-      --vocab_dir ${{inputs.vocab}}
-      --output_dir ${{outputs.embeddings}}
-      --domains 0,1,2,3,4
-      --batch_size 1024
-      --model_name sentence-transformers/all-MiniLM-L6-v2
-      --emb_dim 384
 
   train:
-    type: command
+    component: ./components/pconv_10x_v2_train.yml
     display_name: train-10x-v2
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
@@ -8804,8 +8790,6 @@ jobs:
       properties:
         s_vc: ads-relevance
         sla_tier: Premium
-    environment: azureml:lrm-gpu-env:1
-    code: ..
     inputs:
       seqview: ${{parent.jobs.merge_seqview.outputs.seqview}}
       metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
@@ -8814,27 +8798,9 @@ jobs:
       gpu_instance_count: ${{parent.inputs.gpu_instance_count}}
     outputs:
       model: ${{parent.outputs.train_output}}
-    command: >-
-      set -e &&
-      if [ "${{inputs.gpu_instance_count}}" != "1" ]; then echo 'gpu_instance_count > 1 is gated: current torchrun commands are single-node only' >&2; exit 64; fi &&
-      (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
-      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_10x_v2.gin &&
-      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_10x_v2.gin &&
-      cd proposed_2-mmoe_ple/train &&
-      torchrun --nproc_per_node=8 main.py
-      --gin_config_file=/tmp/train_10x_v2.gin
-      --data_path=${{inputs.seqview}}/train
-      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
-      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
-      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
-      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
-      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
-      --output_path=${{outputs.model}}
-      --mode=job
-      --run_id=pconv_fullgraph_10x_v2
 
   evaluate:
-    type: command
+    component: ./components/pconv_10x_v2_evaluate.yml
     display_name: eval-10x-v2
     compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
     resources:
@@ -8843,8 +8809,6 @@ jobs:
       properties:
         s_vc: ads-relevance
         sla_tier: Premium
-    environment: azureml:lrm-gpu-env:1
-    code: ..
     inputs:
       seqview: ${{parent.jobs.merge_seqview.outputs.seqview}}
       metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
@@ -8854,25 +8818,4 @@ jobs:
       gpu_instance_count: ${{parent.inputs.gpu_instance_count}}
     outputs:
       eval: ${{parent.outputs.eval_output}}
-    command: >-
-      set -e &&
-      if [ "${{inputs.gpu_instance_count}}" != "1" ]; then echo 'gpu_instance_count > 1 is gated: current torchrun commands are single-node only' >&2; exit 64; fi &&
-      mkdir -p ${{outputs.eval}} &&
-      (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
-      CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1) &&
-      if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi &&
-      if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi &&
-      echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
-      torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
-      --gin_config_file=proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
-      --data_path=${{inputs.seqview}}/eval
-      --ckpt_path="$CKPT"
-      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
-      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
-      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
-      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
-      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
-      --eval_batches=${{inputs.eval_batches}}
-      --output_json=${{outputs.eval}}/eval_per_event_type.json
-      --mode=job
 
