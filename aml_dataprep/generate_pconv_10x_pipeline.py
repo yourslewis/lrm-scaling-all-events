@@ -130,7 +130,6 @@ def build_yaml(args: argparse.Namespace) -> str:
     # Bake the Cosmos/ADLS root into the discovery command rather than exposing it
     # as an AML input; AML may pre-bind azureml:// input defaults as uri_folder and
     # fail before the discovery script can run and emit actionable logs.
-    emit(lines, f"  output_root: {root}")
     emit(lines, f"  data_version: {args.data_version}")
     emit(lines, "  layout_version: layout_v1")
     emit(lines, f"  gpu_instance_count: {args.gpu_instance_count}")
@@ -139,7 +138,7 @@ def build_yaml(args: argparse.Namespace) -> str:
     emit(lines)
     emit(lines, "outputs:")
     for name in ["discovered", "raw", "vocab_spill", "vocab_reduced", "vocab", "seqview", "seqview_metadata", "embeddings", "train_output", "eval_output"]:
-        add_output(lines, name, "${{parent.inputs.output_root}}", name)
+        add_output(lines, name, root, name)
     emit(lines)
     emit(lines, "jobs:")
     add_command_job(lines, "discover_raw_shards", "discover-raw-shards-10x-v2", args.cpu_compute, {
