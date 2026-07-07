@@ -40,7 +40,9 @@ class PipelineGeneratorTests(unittest.TestCase):
 
             self.assertIn("relay_shard_0000:", text)
             self.assertIn("relay_shard_0002:", text)
-            self.assertIn("vocab_reduce_d4_b0003:", text)
+            self.assertIn("vocab_reduce_b0003:", text)
+            self.assertIn("vocab_reduce_bucket_group.py", text)
+            self.assertNotIn("vocab_reduce_d4_b0003:", text)
             self.assertIn("parquet_shard_0002:", text)
             self.assertIn("check_parquet_ready:", text)
             self.assertIn("gpu_instance_count: 1", text)

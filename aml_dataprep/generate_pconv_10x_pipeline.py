@@ -204,16 +204,14 @@ python aml_dataprep/parallel/merge_partition_dirs.py
 """)
 
     reduce_outputs = []
-    for domain in range(5):
-        for bucket in range(args.num_buckets):
-            name = f"vocab_reduce_d{domain}_b{bucket:04d}"
-            reduce_outputs.append((name, f"${{{{parent.jobs.{name}.outputs.reduced}}}}"))
-            add_command_job(lines, name, f"vocab-reduce-d{domain}-b{bucket:04d}", args.cpu_compute, {
-                "spill": "${{parent.jobs.merge_vocab_spill.outputs.spill}}",
-            }, {"reduced": output_value()}, f"""
-python aml_dataprep/parallel/vocab_reduce_bucket.py
+    for bucket in range(args.num_buckets):
+        name = f"vocab_reduce_b{bucket:04d}"
+        reduce_outputs.append((name, f"${{{{parent.jobs.{name}.outputs.reduced}}}}"))
+        add_command_job(lines, name, f"vocab-reduce-bucket-{bucket:04d}-all-domains", args.cpu_compute, {
+            "spill": "${{parent.jobs.merge_vocab_spill.outputs.spill}}",
+        }, {"reduced": output_value()}, f"""
+python aml_dataprep/parallel/vocab_reduce_bucket_group.py
 --spill_root ${{{{inputs.spill}}}}
---domain {domain}
 --bucket {bucket}
 --output_dir ${{{{outputs.reduced}}}}
 """)
@@ -339,7 +337,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--output-root", default="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
     p.add_argument("--cpu-shards", type=int, default=10)
-    p.add_argument("--num-buckets", type=int, default=1)
+    p.add_argument("--num-buckets", type=int, default=5)
     p.add_argument("--gpu-instance-count", type=int, default=1)
     p.add_argument("--allow-multinode-gpu", action="store_true")
     p.add_argument("--eval-batches", type=int, default=100)

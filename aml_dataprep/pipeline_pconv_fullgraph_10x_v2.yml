@@ -12,7 +12,7 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  data_version: v3-20260707-pconv-fullgraph-10x-v2-iter4
+  data_version: v3-20260707-pconv-fullgraph-10x-v2
   layout_version: layout_v1
   gpu_instance_count: 1
   num_epochs: 3
@@ -22,43 +22,43 @@ outputs:
   discovered:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/discovered
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/discovered
   raw:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/raw
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/raw
   vocab_spill:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/vocab_spill
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/vocab_spill
   vocab_reduced:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/vocab_reduced
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/vocab_reduced
   vocab:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/vocab
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/vocab
   seqview:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/seqview
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/seqview
   seqview_metadata:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/seqview_metadata
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/seqview_metadata
   embeddings:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/embeddings
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/embeddings
   train_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/train_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/train_output
   eval_output:
     type: uri_folder
     mode: rw_mount
-    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter4/eval_output
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2/eval_output
 
 jobs:
   discover_raw_shards:
@@ -314,7 +314,7 @@ jobs:
       --shard_index 0
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0001:
     type: command
@@ -334,7 +334,7 @@ jobs:
       --shard_index 1
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0002:
     type: command
@@ -354,7 +354,7 @@ jobs:
       --shard_index 2
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0003:
     type: command
@@ -374,7 +374,7 @@ jobs:
       --shard_index 3
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0004:
     type: command
@@ -394,7 +394,7 @@ jobs:
       --shard_index 4
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0005:
     type: command
@@ -414,7 +414,7 @@ jobs:
       --shard_index 5
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0006:
     type: command
@@ -434,7 +434,7 @@ jobs:
       --shard_index 6
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0007:
     type: command
@@ -454,7 +454,7 @@ jobs:
       --shard_index 7
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0008:
     type: command
@@ -474,7 +474,7 @@ jobs:
       --shard_index 8
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   vocab_spill_shard_0009:
     type: command
@@ -494,7 +494,7 @@ jobs:
       --shard_index 9
       --num_shards 10
       --output_dir ${{outputs.spill}}
-      --num_buckets 1
+      --num_buckets 5
 
   merge_vocab_spill:
     type: command
@@ -523,9 +523,9 @@ jobs:
       --expected_count 10
       --expected_stage vocab_spill --expect_shards --expected_num_shards 10
 
-  vocab_reduce_d0_b0000:
+  vocab_reduce_b0000:
     type: command
-    display_name: vocab-reduce-d0-b0000
+    display_name: vocab-reduce-bucket-0000-all-domains
     compute: azureml:CPU-D2ADSV4
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
@@ -534,15 +534,14 @@ jobs:
     outputs:
       reduced: {type: uri_folder, mode: rw_mount}
     command: >-
-      python aml_dataprep/parallel/vocab_reduce_bucket.py
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
       --spill_root ${{inputs.spill}}
-      --domain 0
       --bucket 0
       --output_dir ${{outputs.reduced}}
 
-  vocab_reduce_d1_b0000:
+  vocab_reduce_b0001:
     type: command
-    display_name: vocab-reduce-d1-b0000
+    display_name: vocab-reduce-bucket-0001-all-domains
     compute: azureml:CPU-D2ADSV4
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
@@ -551,15 +550,14 @@ jobs:
     outputs:
       reduced: {type: uri_folder, mode: rw_mount}
     command: >-
-      python aml_dataprep/parallel/vocab_reduce_bucket.py
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
       --spill_root ${{inputs.spill}}
-      --domain 1
-      --bucket 0
+      --bucket 1
       --output_dir ${{outputs.reduced}}
 
-  vocab_reduce_d2_b0000:
+  vocab_reduce_b0002:
     type: command
-    display_name: vocab-reduce-d2-b0000
+    display_name: vocab-reduce-bucket-0002-all-domains
     compute: azureml:CPU-D2ADSV4
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
@@ -568,15 +566,14 @@ jobs:
     outputs:
       reduced: {type: uri_folder, mode: rw_mount}
     command: >-
-      python aml_dataprep/parallel/vocab_reduce_bucket.py
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
       --spill_root ${{inputs.spill}}
-      --domain 2
-      --bucket 0
+      --bucket 2
       --output_dir ${{outputs.reduced}}
 
-  vocab_reduce_d3_b0000:
+  vocab_reduce_b0003:
     type: command
-    display_name: vocab-reduce-d3-b0000
+    display_name: vocab-reduce-bucket-0003-all-domains
     compute: azureml:CPU-D2ADSV4
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
@@ -585,15 +582,14 @@ jobs:
     outputs:
       reduced: {type: uri_folder, mode: rw_mount}
     command: >-
-      python aml_dataprep/parallel/vocab_reduce_bucket.py
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
       --spill_root ${{inputs.spill}}
-      --domain 3
-      --bucket 0
+      --bucket 3
       --output_dir ${{outputs.reduced}}
 
-  vocab_reduce_d4_b0000:
+  vocab_reduce_b0004:
     type: command
-    display_name: vocab-reduce-d4-b0000
+    display_name: vocab-reduce-bucket-0004-all-domains
     compute: azureml:CPU-D2ADSV4
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
@@ -602,10 +598,9 @@ jobs:
     outputs:
       reduced: {type: uri_folder, mode: rw_mount}
     command: >-
-      python aml_dataprep/parallel/vocab_reduce_bucket.py
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
       --spill_root ${{inputs.spill}}
-      --domain 4
-      --bucket 0
+      --bucket 4
       --output_dir ${{outputs.reduced}}
 
   merge_vocab_reduced:
@@ -615,16 +610,16 @@ jobs:
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
     inputs:
-      vocab_reduce_d0_b0000: ${{parent.jobs.vocab_reduce_d0_b0000.outputs.reduced}}
-      vocab_reduce_d1_b0000: ${{parent.jobs.vocab_reduce_d1_b0000.outputs.reduced}}
-      vocab_reduce_d2_b0000: ${{parent.jobs.vocab_reduce_d2_b0000.outputs.reduced}}
-      vocab_reduce_d3_b0000: ${{parent.jobs.vocab_reduce_d3_b0000.outputs.reduced}}
-      vocab_reduce_d4_b0000: ${{parent.jobs.vocab_reduce_d4_b0000.outputs.reduced}}
+      vocab_reduce_b0000: ${{parent.jobs.vocab_reduce_b0000.outputs.reduced}}
+      vocab_reduce_b0001: ${{parent.jobs.vocab_reduce_b0001.outputs.reduced}}
+      vocab_reduce_b0002: ${{parent.jobs.vocab_reduce_b0002.outputs.reduced}}
+      vocab_reduce_b0003: ${{parent.jobs.vocab_reduce_b0003.outputs.reduced}}
+      vocab_reduce_b0004: ${{parent.jobs.vocab_reduce_b0004.outputs.reduced}}
     outputs:
       reduced: ${{parent.outputs.vocab_reduced}}
     command: >-
       python aml_dataprep/parallel/merge_partition_dirs.py
-      --input_dirs ${{inputs.vocab_reduce_d0_b0000}} ${{inputs.vocab_reduce_d1_b0000}} ${{inputs.vocab_reduce_d2_b0000}} ${{inputs.vocab_reduce_d3_b0000}} ${{inputs.vocab_reduce_d4_b0000}}
+      --input_dirs ${{inputs.vocab_reduce_b0000}} ${{inputs.vocab_reduce_b0001}} ${{inputs.vocab_reduce_b0002}} ${{inputs.vocab_reduce_b0003}} ${{inputs.vocab_reduce_b0004}}
       --output_dir ${{outputs.reduced}}
       --stage vocab_reduce
       --expected_count 5
@@ -646,7 +641,7 @@ jobs:
       python aml_dataprep/parallel/vocab_prefix_sum.py
       --reduced_root ${{inputs.reduced}}
       --output_dir ${{outputs.offsets}}
-      --num_buckets 1
+      --num_buckets 5
       --data_version ${{inputs.data_version}}
       --layout_version ${{inputs.layout_version}}
 
@@ -666,7 +661,7 @@ jobs:
       --reduced_root ${{inputs.reduced}}
       --offsets_root ${{inputs.offsets}}
       --vocab_root ${{outputs.vocab}}
-      --num_buckets 1
+      --num_buckets 5
 
   parquet_shard_0000:
     type: command

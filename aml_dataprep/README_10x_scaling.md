@@ -21,7 +21,7 @@ python aml_dataprep/generate_pconv_10x_pipeline.py \
   --output aml_dataprep/pipeline_pconv_fullgraph_10x_v2.yml \
   --cpu-compute azureml:CPU-D2ADSV4 \
   --cpu-shards 10 \
-  --num-buckets 1 \
+  --num-buckets 5 \
   --gpu-instance-count 1 \
   --eval-batches 100 \
   --epochs 3
@@ -33,7 +33,7 @@ Generation-time knobs:
 - `--output-root`: isolated blob output root. Defaults to `derived/lrm_v4_pconv_v3/full_graph_10x_v2`.
 - `--cpu-compute`: CPU target baked into generated jobs. Regenerate the YAML to change it. Use multi-instance pools such as `azureml:CPU-D2ADSV4` or `azureml:CPU-E8aV4` rather than single-instance `CPU-E32SA`.
 - `--cpu-shards`: number of relay/spill/parquet fan-out jobs baked into the generated DAG. Regenerate the YAML to change fan-out. The generated default is 10 for 10x CPU scaling; increase toward available pool capacity for wider fan-out.
-- `--num-buckets`: vocab hash buckets baked into the generated reduce job matrix. This controls reduce parallelism as `5 * num_buckets` reduce jobs. Use `1` for the low-parallelism/no-extra-bucketing path; increase only if reducer memory becomes a bottleneck.
+- `--num-buckets`: vocab hash buckets baked into the generated reduce job matrix. This controls reduce parallelism as `num_buckets` reduce jobs. Each reducer processes that bucket for all domains. Use `3`–`5` for the current 10x sizing; increase only if reducer memory becomes a bottleneck.
 - `--gpu-instance-count`: exposed pipeline parameter. Default is `1`.
 - `--eval-batches`: passed to per-event-type eval.
 - `--epochs`: training epochs written into the temporary gin config.
