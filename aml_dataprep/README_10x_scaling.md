@@ -5,7 +5,7 @@ This note documents the corrected `10x_v2` path for the pconv/fullgraph AML run.
 ## Files
 
 - `generate_pconv_10x_pipeline.py`: materializes a concrete AML pipeline with CPU fan-out jobs and fan-in barriers.
-- `pipeline_pconv_fullgraph_10x_v3.yml`: generated 10x_v2 pipeline using the 10x Cosmos root and isolated 10x_v2 output root.
+- `pipeline_pconv_fullgraph_10x_v3.yml`: generated 10x_v3 pipeline using the 10x Cosmos root and isolated 10x_v3 output root.
 - `submit_pconv_fullgraph_10x_v2.py`: optional submit helper. It is not run by validation.
 - `validate_pconv_10x_pipeline.py`: local static validation plus `azure.ai.ml.load_job` when the SDK is installed.
 - `parallel/relay_partition.py`, `vocab_spill_partition.py`, `parquet_partition.py`: shard-aware CPU wrappers using explicit `--shard_index` and `--num_shards`.
