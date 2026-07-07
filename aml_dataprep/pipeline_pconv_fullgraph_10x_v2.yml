@@ -12,8 +12,8 @@ settings:
   continue_on_step_failure: false
 
 inputs:
-  output_root: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2_iter3
-  data_version: v3-20260707-pconv-fullgraph-10x-v2-iter3
+  output_root: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2
+  data_version: v3-20260707-pconv-fullgraph-10x-v2
   layout_version: layout_v1
   gpu_instance_count: 1
   num_epochs: 3

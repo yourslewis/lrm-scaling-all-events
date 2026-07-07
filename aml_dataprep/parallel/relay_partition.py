@@ -16,11 +16,14 @@ from aml_dataprep.parallel.partition import add_partition_args, load_manifest_ro
 from aml_dataprep.parallel.relay_one_shard import _open_source
 
 
-def _copy_row(row: dict, output_dir: str, chunk_bytes: int) -> None:
+def _copy_row(row: dict, output_dir: str, chunk_bytes: int, source_root: str | None = None) -> None:
     dst = os.path.join(output_dir, row["dest_relpath"])
     tmp = dst + ".tmp"
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    with _open_source(row["source_uri"]) as src, open(tmp, "wb") as out:
+    source = row["source_uri"]
+    if source_root:
+        source = os.path.join(source_root, row.get("source_relpath", row["dest_relpath"]))
+    with _open_source(source) as src, open(tmp, "wb") as out:
         shutil.copyfileobj(src, out, length=chunk_bytes)
         out.flush()
         os.fsync(out.fileno())
@@ -34,6 +37,7 @@ def main() -> None:
     p.add_argument("--manifest", required=True)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--chunk_bytes", type=int, default=1 << 20)
+    p.add_argument("--source_root", help="Mounted source root containing train/ and val/; preferred over source_uri when set.")
     p.add_argument("--dry_run", action="store_true")
     add_partition_args(p)
     args = p.parse_args()
@@ -42,7 +46,7 @@ def main() -> None:
     selected = list(partition_rows(rows, args.shard_index, args.num_shards))
     for _, row in selected:
         if not args.dry_run:
-            _copy_row(row, args.output_dir, args.chunk_bytes)
+            _copy_row(row, args.output_dir, args.chunk_bytes, args.source_root)
     ready_path = write_ready_manifest(os.path.join(args.output_dir, "_ready"), f"relay_shard_{args.shard_index:04d}.json", {
         "stage": "relay",
         "shard_index": args.shard_index,

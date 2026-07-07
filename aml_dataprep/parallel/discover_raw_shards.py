@@ -88,11 +88,13 @@ def main():
         for shard_index, path in enumerate(_list_tsv(args.source_root, split)):
             source_uri = _uri_join(args.source_root, path)
             name = os.path.basename(urlparse(source_uri).path)
+            relpath = f"{split}/{name}"
             rows.append({
                 "split": split,
                 "shard_index": shard_index,
                 "source_uri": source_uri,
-                "dest_relpath": f"{split}/{name}",
+                "source_relpath": relpath,
+                "dest_relpath": relpath,
                 "size_bytes": _size(args.source_root, path),
                 "etag": None,
                 "data_version": args.data_version,
