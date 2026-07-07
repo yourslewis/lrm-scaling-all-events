@@ -10,7 +10,7 @@ import argparse
 from datetime import datetime, timezone
 
 from azure.ai.ml import MLClient, load_job
-from azure.identity import DefaultAzureCredential
+from azure.identity import AzureCliCredential
 
 
 def main() -> None:
@@ -38,7 +38,7 @@ def main() -> None:
     if args.dry_run:
         print(job)
         return
-    client = MLClient(DefaultAzureCredential(), args.subscription_id, args.resource_group, args.workspace)
+    client = MLClient(AzureCliCredential(), args.subscription_id, args.resource_group, args.workspace)
     created = client.jobs.create_or_update(job, skip_validation=args.skip_validation)
     print(created.name)
 
