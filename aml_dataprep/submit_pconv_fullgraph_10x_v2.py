@@ -7,6 +7,7 @@ This script is intentionally inert unless run directly without --dry-run.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 
 from azure.ai.ml import MLClient, load_job
 from azure.identity import DefaultAzureCredential
@@ -19,14 +20,26 @@ def main() -> None:
     p.add_argument("--resource-group", default="wb-aml")
     p.add_argument("--workspace", default="pconv-aml-offline")
     p.add_argument("--dry-run", action="store_true", help="Load and print the job without submitting.")
+    p.add_argument("--name", help="Optional deterministic AML job name for monitor/retry tracking.")
+    p.add_argument(
+        "--skip-validation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip AML service-side pipeline validation during create/update; local validation is run before monitor submits.",
+    )
     args = p.parse_args()
 
     job = load_job(args.pipeline)
+    if args.name:
+        job.name = args.name
+    elif not args.dry_run and not getattr(job, "name", None):
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        job.name = f"pconv_fullgraph_10x_v2_{ts}"
     if args.dry_run:
         print(job)
         return
     client = MLClient(DefaultAzureCredential(), args.subscription_id, args.resource_group, args.workspace)
-    created = client.jobs.create_or_update(job)
+    created = client.jobs.create_or_update(job, skip_validation=args.skip_validation)
     print(created.name)
 
 
