@@ -21,6 +21,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from data_prep.vocab_common_v3 import EVENT_TO_DOMAIN, bucket_of, extract_text_normalized
 
+SOURCE_URI_RAW_ROOT = "__source_uri__"
+
 try:
     import orjson as _json
 
@@ -42,6 +44,25 @@ def _manifest_row(manifest, split, shard_index):
     raise ValueError(f"no manifest row for {split} shard {shard_index}")
 
 
+def _open_raw(row, raw_root):
+    """Open the raw TSV for a manifest row.
+
+    Normally raw_root is a mounted relay output containing train/ and val/. For
+    10x runs, materializing another full raw copy can exceed AML node scratch
+    space, so the generated pipeline may pass SOURCE_URI_RAW_ROOT to stream the
+    source URI recorded by discovery instead.
+    """
+    if raw_root == SOURCE_URI_RAW_ROOT:
+        source = row["source_uri"]
+        if source.startswith("azureml://"):
+            from azureml.fsspec import AzureMachineLearningFileSystem
+
+            fs = AzureMachineLearningFileSystem(source.rsplit("/", 1)[0])
+            return fs.open(source, "r", encoding="utf-8", errors="surrogatepass")
+        return open(source, encoding="utf-8", errors="surrogatepass")
+    return open(os.path.join(raw_root, row["dest_relpath"]), encoding="utf-8", errors="surrogatepass")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--raw_manifest", required=True)
@@ -54,7 +75,7 @@ def main():
     args = p.parse_args()
 
     row = _manifest_row(args.raw_manifest, args.split, args.shard_index)
-    raw_path = os.path.join(args.raw_root, row["dest_relpath"])
+    raw_path = row["source_uri"] if args.raw_root == SOURCE_URI_RAW_ROOT else os.path.join(args.raw_root, row["dest_relpath"])
     handles = OrderedDict()
 
     def hfor(domain, bucket):
@@ -74,7 +95,7 @@ def main():
         return h
 
     n_events = 0
-    with open(raw_path, encoding="utf-8", errors="surrogatepass") as f:
+    with _open_raw(row, args.raw_root) as f:
         try:
             next(f)
         except StopIteration:

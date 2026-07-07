@@ -59,6 +59,8 @@ class PipelineGeneratorTests(unittest.TestCase):
             self.assertNotIn("cpu_shards:", text)
             self.assertNotIn("cpu_compute:", text)
             self.assertIn("--expected_stage relay --expect_shards --expected_num_shards 3", text)
+            self.assertIn("--dry_run", text)
+            self.assertIn("--raw_root __source_uri__", text)
 
 
     def test_generator_rejects_multinode_gpu_without_flag(self):

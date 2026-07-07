@@ -5,7 +5,7 @@ This note documents the corrected `10x_v2` path for the pconv/fullgraph AML run.
 ## Files
 
 - `generate_pconv_10x_pipeline.py`: materializes a concrete AML pipeline with CPU fan-out jobs and fan-in barriers.
-- `pipeline_pconv_fullgraph_10x_v2.yml`: generated 10x_v2 pipeline using the 10x Cosmos root and isolated 10x_v2 output root.
+- `pipeline_pconv_fullgraph_10x_v3.yml`: generated 10x_v2 pipeline using the 10x Cosmos root and isolated 10x_v2 output root.
 - `submit_pconv_fullgraph_10x_v2.py`: optional submit helper. It is not run by validation.
 - `validate_pconv_10x_pipeline.py`: local static validation plus `azure.ai.ml.load_job` when the SDK is installed.
 - `parallel/relay_partition.py`, `vocab_spill_partition.py`, `parquet_partition.py`: shard-aware CPU wrappers using explicit `--shard_index` and `--num_shards`.
@@ -18,9 +18,10 @@ Default corrected 10x_v2 generation:
 
 ```bash
 python aml_dataprep/generate_pconv_10x_pipeline.py \
-  --output aml_dataprep/pipeline_pconv_fullgraph_10x_v2.yml \
+  --output aml_dataprep/pipeline_pconv_fullgraph_10x_v3.yml \
   --cpu-compute azureml:CPU-D2ADSV4 \
   --cpu-shards 10 \
+  --pipeline-version 10x_v3 \
   --num-buckets 5 \
   --gpu-instance-count 1 \
   --eval-batches 100 \
@@ -44,7 +45,7 @@ Do not submit during local validation. When ready to launch from an authenticate
 
 ```bash
 python aml_dataprep/submit_pconv_fullgraph_10x_v2.py \
-  --pipeline aml_dataprep/pipeline_pconv_fullgraph_10x_v2.yml \
+  --pipeline aml_dataprep/pipeline_pconv_fullgraph_10x_v3.yml \
   --dry-run
 ```
 
@@ -60,7 +61,12 @@ GPU `instance_count` is parameterized but still gated. Current train and eval co
 
 ```bash
 python -m unittest tests.aml_dataprep.test_parallel_partitioning tests.aml_dataprep.test_10x_pipeline_generator
-python aml_dataprep/validate_pconv_10x_pipeline.py aml_dataprep/pipeline_pconv_fullgraph_10x_v2.yml
+python aml_dataprep/validate_pconv_10x_pipeline.py aml_dataprep/pipeline_pconv_fullgraph_10x_v3.yml
 ```
 
 `validate_pconv_10x_pipeline.py` runs static dependency checks everywhere. If `azure.ai.ml` is installed, it also calls `azure.ai.ml.load_job` without submitting the job.
+
+
+## Versioning rule
+
+Every materially changed pipeline submission must bump `--pipeline-version` (`10x_v3`, `10x_v4`, ...). The generated YAML, AML run name, display name, data version label, and default output root should all carry the same version. Do not submit changed logic under an existing semantic version; reserve timestamp-only suffixes for retries of identical YAML/code.

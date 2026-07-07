@@ -23,6 +23,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from data_prep.vocab_common_v3 import EVENT_TO_DOMAIN, bucket_of, extract_text_normalized
 
+SOURCE_URI_RAW_ROOT = "__source_uri__"
+
 AD_EVENTS = {"SearchClick", "NativeClick"}
 ALL_EVENTS = set(EVENT_TO_DOMAIN.keys())
 DOMAIN_OFFSET = 1_000_000_000
@@ -68,6 +70,23 @@ class ShardedText2Id:
         return self.cache[key].get(text)
 
 
+def _open_raw(row, raw_root):
+    """Open the raw TSV for a manifest row.
+
+    The 10x pipeline can avoid a large intermediate raw relay copy by passing
+    SOURCE_URI_RAW_ROOT, which makes readers stream the discovery source URI.
+    """
+    if raw_root == SOURCE_URI_RAW_ROOT:
+        source = row["source_uri"]
+        if source.startswith("azureml://"):
+            from azureml.fsspec import AzureMachineLearningFileSystem
+
+            fs = AzureMachineLearningFileSystem(source.rsplit("/", 1)[0])
+            return fs.open(source, "r", encoding="utf-8", errors="surrogatepass")
+        return open(source, encoding="utf-8", errors="surrogatepass")
+    return open(os.path.join(raw_root, row["dest_relpath"]), encoding="utf-8", errors="surrogatepass")
+
+
 def parse_time(s):
     try:
         return int(datetime.strptime(s, "%Y-%m-%d %H:%M").timestamp())
@@ -99,7 +118,7 @@ def main():
     import pandas as pd
 
     row = _manifest_row(args.raw_manifest, args.split, args.shard_index)
-    raw_path = os.path.join(args.raw_root, row["dest_relpath"])
+    raw_path = row["source_uri"] if args.raw_root == SOURCE_URI_RAW_ROOT else os.path.join(args.raw_root, row["dest_relpath"])
     out_split = "train" if args.split == "train" else "eval"
     out_dir = os.path.join(args.output_dir, out_split)
     stats_dir = os.path.join(args.output_dir, "_stats")
@@ -110,7 +129,7 @@ def main():
     rows = []
     miss_count = 0
     max_seq_len = 0
-    with open(raw_path, encoding="utf-8", errors="surrogatepass") as f:
+    with _open_raw(row, args.raw_root) as f:
         try:
             next(f)
         except StopIteration:

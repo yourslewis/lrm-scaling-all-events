@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the pconv/fullgraph 10x_v2 AML pipeline with explicit CPU fan-out."""
+"""Generate a versioned pconv/fullgraph 10x AML pipeline with explicit CPU fan-out."""
 
 from __future__ import annotations
 
@@ -112,13 +112,15 @@ def validate_args(args: argparse.Namespace) -> None:
 
 def build_yaml(args: argparse.Namespace) -> str:
     root = args.output_root.rstrip("/")
+    version = args.pipeline_version
+    version_dash = version.replace("_", "-")
     lines: list[str] = []
     emit(lines, "$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json")
     emit(lines, "type: pipeline")
-    emit(lines, "display_name: lrm-l800-pconv-fullgraph-10x-v2")
+    emit(lines, f"display_name: lrm-l800-pconv-fullgraph-{version_dash}")
     emit(lines, "experiment_name: lrm-l800-pconv-fullgraph-10x")
     emit(lines, "description: >-")
-    emit(lines, "  Generated 10x_v2 pconv/fullgraph pipeline with explicit CPU fan-out, fan-in")
+    emit(lines, f"  Generated {version} pconv/fullgraph pipeline with explicit CPU fan-out, fan-in")
     emit(lines, "  readiness checks, and gated GPU instance_count parameterization.")
     emit(lines)
     emit(lines, "settings:")
@@ -162,6 +164,7 @@ python aml_dataprep/parallel/relay_partition.py
 --shard_index {shard}
 --num_shards {args.cpu_shards}
 --output_dir ${{{{outputs.raw}}}}
+--dry_run
 """, env="azureml:lrm-relay-env:2", identity=True)
 
     merge_inputs = {f"raw_{i:04d}": value for i, value in enumerate(relay_outputs)}
@@ -185,7 +188,7 @@ python aml_dataprep/parallel/merge_partition_dirs.py
         }, {"spill": output_value()}, f"""
 python aml_dataprep/parallel/vocab_spill_partition.py
 --raw_manifest ${{{{inputs.discovered}}}}/raw_source_manifest.jsonl
---raw_root ${{{{inputs.raw}}}}
+--raw_root __source_uri__
 --shard_index {shard}
 --num_shards {args.cpu_shards}
 --output_dir ${{{{outputs.spill}}}}
@@ -262,7 +265,7 @@ python aml_dataprep/parallel/vocab_finalize_all_buckets.py
         }, {"seqview": output_value()}, f"""
 python aml_dataprep/parallel/parquet_partition.py
 --raw_manifest ${{{{inputs.discovered}}}}/raw_source_manifest.jsonl
---raw_root ${{{{inputs.raw}}}}
+--raw_root __source_uri__
 --vocab_dir ${{{{inputs.vocab}}}}
 --shard_index {shard}
 --num_shards {args.cpu_shards}
@@ -304,13 +307,13 @@ python aml_dataprep/parallel/aggregate_seqview_manifest.py
 --mode all_events
 """)
 
-    add_component_job(lines, "encode_embeddings", "encode-embeddings-10x-v2", "./components/pconv_10x_v2_encode_embeddings.yml", GPU_COMPUTE, {
+    add_component_job(lines, "encode_embeddings", f"encode-embeddings-{version_dash}", "./components/pconv_10x_v2_encode_embeddings.yml", GPU_COMPUTE, {
         "vocab": "${{parent.jobs.vocab_finalize.outputs.vocab}}",
         "metadata": "${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}",
         "gpu_instance_count": "${{parent.inputs.gpu_instance_count}}",
     }, {"embeddings": "${{parent.outputs.embeddings}}"}, instance_count="${{parent.inputs.gpu_instance_count}}")
 
-    add_component_job(lines, "train", "train-10x-v2", "./components/pconv_10x_v2_train.yml", GPU_COMPUTE, {
+    add_component_job(lines, "train", f"train-{version_dash}", "./components/pconv_10x_v2_train.yml", GPU_COMPUTE, {
         "seqview": "${{parent.jobs.merge_seqview.outputs.seqview}}",
         "metadata": "${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}",
         "embeddings": "${{parent.jobs.encode_embeddings.outputs.embeddings}}",
@@ -318,7 +321,7 @@ python aml_dataprep/parallel/aggregate_seqview_manifest.py
         "gpu_instance_count": "${{parent.inputs.gpu_instance_count}}",
     }, {"model": "${{parent.outputs.train_output}}"}, instance_count="${{parent.inputs.gpu_instance_count}}")
 
-    add_component_job(lines, "evaluate", "eval-10x-v2", "./components/pconv_10x_v2_evaluate.yml", GPU_COMPUTE, {
+    add_component_job(lines, "evaluate", f"eval-{version_dash}", "./components/pconv_10x_v2_evaluate.yml", GPU_COMPUTE, {
         "seqview": "${{parent.jobs.merge_seqview.outputs.seqview}}",
         "metadata": "${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}",
         "embeddings": "${{parent.jobs.encode_embeddings.outputs.embeddings}}",
@@ -332,9 +335,10 @@ python aml_dataprep/parallel/aggregate_seqview_manifest.py
 def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--output", required=True)
-    p.add_argument("--source-root", default="azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4_10x")
-    p.add_argument("--data-version", default="v3-20260707-pconv-fullgraph-10x-v2")
-    p.add_argument("--output-root", default="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v2")
+    p.add_argument("--pipeline-version", default="10x_v3", help="Semantic pipeline version, e.g. 10x_v3. Bump for every materially changed submitted pipeline.")
+    p.add_argument("--source-root", default="azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4_10x")
+    p.add_argument("--data-version", help="Dataset/pipeline data version label. Defaults to v3-20260707-pconv-fullgraph-<pipeline-version>.")
+    p.add_argument("--output-root", help="Datastore output root. Defaults to derived/lrm_v4_pconv_v3/full_graph_<pipeline-version>.")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
     p.add_argument("--cpu-shards", type=int, default=10)
     p.add_argument("--num-buckets", type=int, default=5)
@@ -347,6 +351,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv or sys.argv[1:])
+    if args.data_version is None:
+        args.data_version = f"v3-20260707-pconv-fullgraph-{args.pipeline_version}"
+    if args.output_root is None:
+        args.output_root = f"azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_{args.pipeline_version}"
     validate_args(args)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
