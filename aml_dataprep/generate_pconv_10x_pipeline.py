@@ -336,7 +336,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--output", required=True)
     p.add_argument("--pipeline-version", default="10x_v3", help="Semantic pipeline version, e.g. 10x_v3. Bump for every materially changed submitted pipeline.")
-    p.add_argument("--source-root", default="azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4_10x")
+    p.add_argument("--source-root", default="azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4_10x")
     p.add_argument("--data-version", help="Dataset/pipeline data version label. Defaults to v3-20260707-pconv-fullgraph-<pipeline-version>.")
     p.add_argument("--output-root", help="Datastore output root. Defaults to derived/lrm_v4_pconv_v3/full_graph_<pipeline-version>.")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
