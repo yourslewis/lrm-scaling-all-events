@@ -101,6 +101,8 @@ def main():
         except StopIteration:
             pass
         for line in f:
+            if isinstance(line, (bytes, bytearray)):
+                line = line.decode("utf-8", "surrogatepass")
             tab = line.find("\t")
             if tab < 0:
                 continue
