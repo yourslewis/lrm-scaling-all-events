@@ -12,6 +12,12 @@ import argparse
 import glob
 import json
 import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from aml_dataprep.parallel.partition import write_ready_manifest
 
 
 def main():
@@ -36,6 +42,7 @@ def main():
     count = {"domain": args.domain, "bucket": args.bucket, "count": len(uniq)}
     with open(os.path.join(out_dir, "count.json"), "w", encoding="utf-8") as f:
         json.dump(count, f, sort_keys=True)
+    write_ready_manifest(Path(args.output_dir) / "_ready", f"vocab_reduce_d{args.domain}_b{args.bucket:04d}.json", count)
     print(f"reduced domain={args.domain} bucket={args.bucket:04d} count={len(uniq)}", flush=True)
 
 
