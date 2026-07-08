@@ -1,0 +1,1018 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+type: pipeline
+display_name: lrm-l800-pconv-fullgraph-10x-v6
+experiment_name: lrm-l800-pconv-fullgraph-10x
+description: >-
+  Generated 10x_v6 pconv/fullgraph pipeline with explicit CPU fan-out, fan-in
+  readiness checks, and gated GPU instance_count parameterization.
+
+settings:
+  default_compute: azureml:CPU-D2ADSV4
+  default_datastore: azureml:workspaceblobstore
+  continue_on_step_failure: false
+
+inputs:
+  data_version: v3-20260707-pconv-fullgraph-10x_v6
+  layout_version: layout_v1
+  gpu_instance_count: 1
+  num_epochs: 3
+  eval_batches: 100
+
+outputs:
+  discovered:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/discovered
+  raw:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/raw
+  vocab_spill:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/vocab_spill
+  vocab_reduced:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/vocab_reduced
+  vocab:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/vocab
+  seqview:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/seqview
+  seqview_metadata:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/seqview_metadata
+  embeddings:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/embeddings
+  train_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/train_output
+  eval_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v6/eval_output
+
+jobs:
+  discover_raw_shards:
+    type: command
+    display_name: discover-raw-shards-10x-v2
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      data_version: ${{parent.inputs.data_version}}
+    outputs:
+      discovered: ${{parent.outputs.discovered}}
+    command: >-
+      python aml_dataprep/parallel/discover_raw_shards.py
+      --source_root azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4_10x
+      --data_version ${{inputs.data_version}}
+      --output_dir ${{outputs.discovered}}
+
+  relay_shard_0000:
+    type: command
+    display_name: relay-shard-0000
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 0
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0001:
+    type: command
+    display_name: relay-shard-0001
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 1
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0002:
+    type: command
+    display_name: relay-shard-0002
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 2
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0003:
+    type: command
+    display_name: relay-shard-0003
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 3
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0004:
+    type: command
+    display_name: relay-shard-0004
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 4
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0005:
+    type: command
+    display_name: relay-shard-0005
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 5
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0006:
+    type: command
+    display_name: relay-shard-0006
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 6
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0007:
+    type: command
+    display_name: relay-shard-0007
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 7
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0008:
+    type: command
+    display_name: relay-shard-0008
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 8
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  relay_shard_0009:
+    type: command
+    display_name: relay-shard-0009
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:lrm-relay-env:2
+    identity:
+      type: user_identity
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+    outputs:
+      raw: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/relay_partition.py
+      --manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --shard_index 9
+      --num_shards 10
+      --output_dir ${{outputs.raw}}
+      --dry_run
+
+  merge_relay_raw:
+    type: command
+    display_name: merge-relay-raw
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      raw_0000: ${{parent.jobs.relay_shard_0000.outputs.raw}}
+      raw_0001: ${{parent.jobs.relay_shard_0001.outputs.raw}}
+      raw_0002: ${{parent.jobs.relay_shard_0002.outputs.raw}}
+      raw_0003: ${{parent.jobs.relay_shard_0003.outputs.raw}}
+      raw_0004: ${{parent.jobs.relay_shard_0004.outputs.raw}}
+      raw_0005: ${{parent.jobs.relay_shard_0005.outputs.raw}}
+      raw_0006: ${{parent.jobs.relay_shard_0006.outputs.raw}}
+      raw_0007: ${{parent.jobs.relay_shard_0007.outputs.raw}}
+      raw_0008: ${{parent.jobs.relay_shard_0008.outputs.raw}}
+      raw_0009: ${{parent.jobs.relay_shard_0009.outputs.raw}}
+    outputs:
+      raw: ${{parent.outputs.raw}}
+    command: >-
+      python aml_dataprep/parallel/merge_partition_dirs.py
+      --input_dirs ${{inputs.raw_0000}} ${{inputs.raw_0001}} ${{inputs.raw_0002}} ${{inputs.raw_0003}} ${{inputs.raw_0004}} ${{inputs.raw_0005}} ${{inputs.raw_0006}} ${{inputs.raw_0007}} ${{inputs.raw_0008}} ${{inputs.raw_0009}}
+      --output_dir ${{outputs.raw}}
+      --stage relay
+      --expected_count 10
+      --expected_stage relay --expect_shards --expected_num_shards 10
+
+  vocab_spill_shard_0000:
+    type: command
+    display_name: vocab-spill-shard-0000
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 0
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0001:
+    type: command
+    display_name: vocab-spill-shard-0001
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 1
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0002:
+    type: command
+    display_name: vocab-spill-shard-0002
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 2
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0003:
+    type: command
+    display_name: vocab-spill-shard-0003
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 3
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0004:
+    type: command
+    display_name: vocab-spill-shard-0004
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 4
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0005:
+    type: command
+    display_name: vocab-spill-shard-0005
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 5
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0006:
+    type: command
+    display_name: vocab-spill-shard-0006
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 6
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0007:
+    type: command
+    display_name: vocab-spill-shard-0007
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 7
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0008:
+    type: command
+    display_name: vocab-spill-shard-0008
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 8
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  vocab_spill_shard_0009:
+    type: command
+    display_name: vocab-spill-shard-0009
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+    outputs:
+      spill: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_spill_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --shard_index 9
+      --num_shards 10
+      --output_dir ${{outputs.spill}}
+      --num_buckets 5
+
+  merge_vocab_spill:
+    type: command
+    display_name: merge-vocab-spill
+    compute: azureml:CPU-E32aV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      spill_0000: ${{parent.jobs.vocab_spill_shard_0000.outputs.spill}}
+      spill_0001: ${{parent.jobs.vocab_spill_shard_0001.outputs.spill}}
+      spill_0002: ${{parent.jobs.vocab_spill_shard_0002.outputs.spill}}
+      spill_0003: ${{parent.jobs.vocab_spill_shard_0003.outputs.spill}}
+      spill_0004: ${{parent.jobs.vocab_spill_shard_0004.outputs.spill}}
+      spill_0005: ${{parent.jobs.vocab_spill_shard_0005.outputs.spill}}
+      spill_0006: ${{parent.jobs.vocab_spill_shard_0006.outputs.spill}}
+      spill_0007: ${{parent.jobs.vocab_spill_shard_0007.outputs.spill}}
+      spill_0008: ${{parent.jobs.vocab_spill_shard_0008.outputs.spill}}
+      spill_0009: ${{parent.jobs.vocab_spill_shard_0009.outputs.spill}}
+    outputs:
+      spill: ${{parent.outputs.vocab_spill}}
+    command: >-
+      python aml_dataprep/parallel/merge_partition_dirs.py
+      --input_dirs ${{inputs.spill_0000}} ${{inputs.spill_0001}} ${{inputs.spill_0002}} ${{inputs.spill_0003}} ${{inputs.spill_0004}} ${{inputs.spill_0005}} ${{inputs.spill_0006}} ${{inputs.spill_0007}} ${{inputs.spill_0008}} ${{inputs.spill_0009}}
+      --output_dir ${{outputs.spill}}
+      --stage vocab_spill
+      --expected_count 10
+      --expected_stage vocab_spill --expect_shards --expected_num_shards 10
+
+  vocab_reduce_b0000:
+    type: command
+    display_name: vocab-reduce-bucket-0000-all-domains
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      spill: ${{parent.jobs.merge_vocab_spill.outputs.spill}}
+    outputs:
+      reduced: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
+      --spill_root ${{inputs.spill}}
+      --bucket 0
+      --output_dir ${{outputs.reduced}}
+
+  vocab_reduce_b0001:
+    type: command
+    display_name: vocab-reduce-bucket-0001-all-domains
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      spill: ${{parent.jobs.merge_vocab_spill.outputs.spill}}
+    outputs:
+      reduced: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
+      --spill_root ${{inputs.spill}}
+      --bucket 1
+      --output_dir ${{outputs.reduced}}
+
+  vocab_reduce_b0002:
+    type: command
+    display_name: vocab-reduce-bucket-0002-all-domains
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      spill: ${{parent.jobs.merge_vocab_spill.outputs.spill}}
+    outputs:
+      reduced: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
+      --spill_root ${{inputs.spill}}
+      --bucket 2
+      --output_dir ${{outputs.reduced}}
+
+  vocab_reduce_b0003:
+    type: command
+    display_name: vocab-reduce-bucket-0003-all-domains
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      spill: ${{parent.jobs.merge_vocab_spill.outputs.spill}}
+    outputs:
+      reduced: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
+      --spill_root ${{inputs.spill}}
+      --bucket 3
+      --output_dir ${{outputs.reduced}}
+
+  vocab_reduce_b0004:
+    type: command
+    display_name: vocab-reduce-bucket-0004-all-domains
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      spill: ${{parent.jobs.merge_vocab_spill.outputs.spill}}
+    outputs:
+      reduced: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_reduce_bucket_group.py
+      --spill_root ${{inputs.spill}}
+      --bucket 4
+      --output_dir ${{outputs.reduced}}
+
+  merge_vocab_reduced:
+    type: command
+    display_name: merge-vocab-reduced
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      vocab_reduce_b0000: ${{parent.jobs.vocab_reduce_b0000.outputs.reduced}}
+      vocab_reduce_b0001: ${{parent.jobs.vocab_reduce_b0001.outputs.reduced}}
+      vocab_reduce_b0002: ${{parent.jobs.vocab_reduce_b0002.outputs.reduced}}
+      vocab_reduce_b0003: ${{parent.jobs.vocab_reduce_b0003.outputs.reduced}}
+      vocab_reduce_b0004: ${{parent.jobs.vocab_reduce_b0004.outputs.reduced}}
+    outputs:
+      reduced: ${{parent.outputs.vocab_reduced}}
+    command: >-
+      python aml_dataprep/parallel/merge_partition_dirs.py
+      --input_dirs ${{inputs.vocab_reduce_b0000}} ${{inputs.vocab_reduce_b0001}} ${{inputs.vocab_reduce_b0002}} ${{inputs.vocab_reduce_b0003}} ${{inputs.vocab_reduce_b0004}}
+      --output_dir ${{outputs.reduced}}
+      --stage vocab_reduce
+      --expected_count 5
+      --expected_stage vocab_reduce
+
+  vocab_prefix_sum:
+    type: command
+    display_name: vocab-prefix-sum
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      reduced: ${{parent.jobs.merge_vocab_reduced.outputs.reduced}}
+      data_version: ${{parent.inputs.data_version}}
+      layout_version: ${{parent.inputs.layout_version}}
+    outputs:
+      offsets: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/vocab_prefix_sum.py
+      --reduced_root ${{inputs.reduced}}
+      --output_dir ${{outputs.offsets}}
+      --num_buckets 5
+      --data_version ${{inputs.data_version}}
+      --layout_version ${{inputs.layout_version}}
+
+  vocab_finalize:
+    type: command
+    display_name: vocab-finalize-all-buckets
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      reduced: ${{parent.jobs.merge_vocab_reduced.outputs.reduced}}
+      offsets: ${{parent.jobs.vocab_prefix_sum.outputs.offsets}}
+    outputs:
+      vocab: ${{parent.outputs.vocab}}
+    command: >-
+      python aml_dataprep/parallel/vocab_finalize_all_buckets.py
+      --reduced_root ${{inputs.reduced}}
+      --offsets_root ${{inputs.offsets}}
+      --vocab_root ${{outputs.vocab}}
+      --num_buckets 5
+
+  parquet_shard_0000:
+    type: command
+    display_name: parquet-shard-0000
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 0
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0001:
+    type: command
+    display_name: parquet-shard-0001
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 1
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0002:
+    type: command
+    display_name: parquet-shard-0002
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 2
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0003:
+    type: command
+    display_name: parquet-shard-0003
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 3
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0004:
+    type: command
+    display_name: parquet-shard-0004
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 4
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0005:
+    type: command
+    display_name: parquet-shard-0005
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 5
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0006:
+    type: command
+    display_name: parquet-shard-0006
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 6
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0007:
+    type: command
+    display_name: parquet-shard-0007
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 7
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0008:
+    type: command
+    display_name: parquet-shard-0008
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 8
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  parquet_shard_0009:
+    type: command
+    display_name: parquet-shard-0009
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      discovered: ${{parent.jobs.discover_raw_shards.outputs.discovered}}
+      raw: ${{parent.jobs.merge_relay_raw.outputs.raw}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+    outputs:
+      seqview: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/parquet_partition.py
+      --raw_manifest ${{inputs.discovered}}/raw_source_manifest.jsonl
+      --raw_root __source_uri__
+      --vocab_dir ${{inputs.vocab}}
+      --shard_index 9
+      --num_shards 10
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+
+  merge_seqview:
+    type: command
+    display_name: merge-seqview
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      seqview_0000: ${{parent.jobs.parquet_shard_0000.outputs.seqview}}
+      seqview_0001: ${{parent.jobs.parquet_shard_0001.outputs.seqview}}
+      seqview_0002: ${{parent.jobs.parquet_shard_0002.outputs.seqview}}
+      seqview_0003: ${{parent.jobs.parquet_shard_0003.outputs.seqview}}
+      seqview_0004: ${{parent.jobs.parquet_shard_0004.outputs.seqview}}
+      seqview_0005: ${{parent.jobs.parquet_shard_0005.outputs.seqview}}
+      seqview_0006: ${{parent.jobs.parquet_shard_0006.outputs.seqview}}
+      seqview_0007: ${{parent.jobs.parquet_shard_0007.outputs.seqview}}
+      seqview_0008: ${{parent.jobs.parquet_shard_0008.outputs.seqview}}
+      seqview_0009: ${{parent.jobs.parquet_shard_0009.outputs.seqview}}
+    outputs:
+      seqview: ${{parent.outputs.seqview}}
+    command: >-
+      python aml_dataprep/parallel/merge_partition_dirs.py
+      --input_dirs ${{inputs.seqview_0000}} ${{inputs.seqview_0001}} ${{inputs.seqview_0002}} ${{inputs.seqview_0003}} ${{inputs.seqview_0004}} ${{inputs.seqview_0005}} ${{inputs.seqview_0006}} ${{inputs.seqview_0007}} ${{inputs.seqview_0008}} ${{inputs.seqview_0009}}
+      --output_dir ${{outputs.seqview}}
+      --stage parquet
+      --expected_count 10
+      --expected_stage parquet --expect_shards --expected_num_shards 10
+
+  check_parquet_ready:
+    type: command
+    display_name: check-parquet-ready
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.merge_seqview.outputs.seqview}}
+    outputs:
+      ready: {type: uri_folder, mode: rw_mount}
+    command: >-
+      python aml_dataprep/parallel/check_ready_manifests.py
+      --ready_dir ${{inputs.seqview}}/_ready
+      --pattern parquet_merged.json
+      --num_shards 1
+      --output_dir ${{outputs.ready}}
+      --stage parquet_fanin
+
+  aggregate_seqview_manifest:
+    type: command
+    display_name: aggregate-seqview-manifest
+    compute: azureml:CPU-D2ADSV4
+    environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.merge_seqview.outputs.seqview}}
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+      parquet_ready: ${{parent.jobs.check_parquet_ready.outputs.ready}}
+    outputs:
+      metadata: ${{parent.outputs.seqview_metadata}}
+    command: >-
+      python aml_dataprep/parallel/aggregate_seqview_manifest.py
+      --seqview_dir ${{inputs.seqview}}
+      --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.metadata}}
+      --mode all_events
+
+  encode_embeddings:
+    type: command
+    component: ./components/pconv_10x_v2_encode_embeddings.yml
+    display_name: encode-embeddings-10x-v6
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: ${{parent.inputs.gpu_instance_count}}
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    inputs:
+      vocab: ${{parent.jobs.vocab_finalize.outputs.vocab}}
+      metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
+      gpu_instance_count: ${{parent.inputs.gpu_instance_count}}
+    outputs:
+      embeddings: ${{parent.outputs.embeddings}}
+
+  train:
+    type: command
+    component: ./components/pconv_10x_v2_train.yml
+    display_name: train-10x-v6
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: ${{parent.inputs.gpu_instance_count}}
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    inputs:
+      seqview: ${{parent.jobs.merge_seqview.outputs.seqview}}
+      metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
+      embeddings: ${{parent.jobs.encode_embeddings.outputs.embeddings}}
+      num_epochs: ${{parent.inputs.num_epochs}}
+      gpu_instance_count: ${{parent.inputs.gpu_instance_count}}
+    outputs:
+      model: ${{parent.outputs.train_output}}
+
+  evaluate:
+    type: command
+    component: ./components/pconv_10x_v2_evaluate.yml
+    display_name: eval-10x-v6
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: ${{parent.inputs.gpu_instance_count}}
+      properties:
+        s_vc: ads-relevance
+        sla_tier: Premium
+    inputs:
+      seqview: ${{parent.jobs.merge_seqview.outputs.seqview}}
+      metadata: ${{parent.jobs.aggregate_seqview_manifest.outputs.metadata}}
+      embeddings: ${{parent.jobs.encode_embeddings.outputs.embeddings}}
+      model: ${{parent.jobs.train.outputs.model}}
+      eval_batches: ${{parent.inputs.eval_batches}}
+      gpu_instance_count: ${{parent.inputs.gpu_instance_count}}
+    outputs:
+      eval: ${{parent.outputs.eval_output}}
+

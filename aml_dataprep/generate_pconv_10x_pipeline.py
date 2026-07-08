@@ -197,7 +197,7 @@ python aml_dataprep/parallel/vocab_spill_partition.py
 
     spill_merge_inputs = {f"spill_{i:04d}": value for i, value in enumerate(spill_outputs)}
     spill_cmd_inputs = " ".join(f"${{{{inputs.spill_{i:04d}}}}}" for i in range(args.cpu_shards))
-    add_command_job(lines, "merge_vocab_spill", "merge-vocab-spill", args.cpu_compute, spill_merge_inputs, {"spill": "${{parent.outputs.vocab_spill}}"}, f"""
+    add_command_job(lines, "merge_vocab_spill", "merge-vocab-spill", args.merge_spill_compute or args.cpu_compute, spill_merge_inputs, {"spill": "${{parent.outputs.vocab_spill}}"}, f"""
 python aml_dataprep/parallel/merge_partition_dirs.py
 --input_dirs {spill_cmd_inputs}
 --output_dir ${{{{outputs.spill}}}}
@@ -340,6 +340,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--data-version", help="Dataset/pipeline data version label. Defaults to v3-20260707-pconv-fullgraph-<pipeline-version>.")
     p.add_argument("--output-root", help="Datastore output root. Defaults to derived/lrm_v4_pconv_v3/full_graph_<pipeline-version>.")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
+    p.add_argument("--merge-spill-compute", help="Optional larger CPU target for merge_vocab_spill fan-in when shard spill mounts exceed the default node disk.")
     p.add_argument("--cpu-shards", type=int, default=10)
     p.add_argument("--num-buckets", type=int, default=5)
     p.add_argument("--gpu-instance-count", type=int, default=1)
