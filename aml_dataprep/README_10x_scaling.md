@@ -70,3 +70,28 @@ python aml_dataprep/validate_pconv_10x_pipeline.py aml_dataprep/pipeline_pconv_f
 ## Versioning rule
 
 Every materially changed pipeline submission must bump `--pipeline-version` (`10x_v3`, `10x_v4`, ...). The generated YAML, AML run name, display name, data version label, and default output root should all carry the same version. Do not submit changed logic under an existing semantic version; reserve timestamp-only suffixes for retries of identical YAML/code.
+
+
+## Artifact output versioning
+
+Pipeline version and artifact version are intentionally separate. Bump `--pipeline-version` for every materially changed submitted graph (`10x_v7`, `10x_v8`, ...), but do not change upstream output roots just because the graph version changes.
+
+Generated outputs now live under a stable base root, by default:
+
+```text
+azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/
+```
+
+Each stage has its own artifact/module version subdirectory:
+
+- `discovered_<discover-version>` (default `discovered_v1`)
+- `raw_<raw-version>` (default `raw_v1`)
+- `vocab_spill_<vocab-spill-version>` (default `vocab_spill_v1`)
+- `vocab_reduced_<vocab-reduce-version>` (default `vocab_reduced_v1`)
+- `vocab_<vocab-version>` (default `vocab_v1`)
+- `seqview_<seqview-version>` / `seqview_metadata_<seqview-version>` (default `seqview_v1` / `seqview_metadata_v1`)
+- `embeddings_<embedding-version>` (default `embeddings_v1`)
+- `train_output_<train-version>` (default `train_output_v1`)
+- `eval_output_<eval-version>` (default `eval_output_v1`)
+
+Only bump the stage version whose logic/input contract changed. Example: if only `merge_vocab_spill` compute changes, keep `--vocab-spill-version v1` and bump only the downstream/relevant artifact version if its output contract changes. This lets future pipelines reuse completed upstream artifacts instead of rerunning `vocab_spill_shard_*` unnecessarily.

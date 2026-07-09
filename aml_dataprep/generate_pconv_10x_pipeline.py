@@ -114,6 +114,18 @@ def build_yaml(args: argparse.Namespace) -> str:
     root = args.output_root.rstrip("/")
     version = args.pipeline_version
     version_dash = version.replace("_", "-")
+    output_suffixes = {
+        "discovered": f"discovered_{args.discover_version}",
+        "raw": f"raw_{args.raw_version}",
+        "vocab_spill": f"vocab_spill_{args.vocab_spill_version}",
+        "vocab_reduced": f"vocab_reduced_{args.vocab_reduce_version}",
+        "vocab": f"vocab_{args.vocab_version}",
+        "seqview": f"seqview_{args.seqview_version}",
+        "seqview_metadata": f"seqview_metadata_{args.seqview_version}",
+        "embeddings": f"embeddings_{args.embedding_version}",
+        "train_output": f"train_output_{args.train_version}",
+        "eval_output": f"eval_output_{args.eval_version}",
+    }
     lines: list[str] = []
     emit(lines, "$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json")
     emit(lines, "type: pipeline")
@@ -134,13 +146,23 @@ def build_yaml(args: argparse.Namespace) -> str:
     # fail before the discovery script can run and emit actionable logs.
     emit(lines, f"  data_version: {args.data_version}")
     emit(lines, "  layout_version: layout_v1")
+    emit(lines, f"  pipeline_version: {args.pipeline_version}")
+    emit(lines, f"  discover_version: {args.discover_version}")
+    emit(lines, f"  raw_version: {args.raw_version}")
+    emit(lines, f"  vocab_spill_version: {args.vocab_spill_version}")
+    emit(lines, f"  vocab_reduce_version: {args.vocab_reduce_version}")
+    emit(lines, f"  vocab_version: {args.vocab_version}")
+    emit(lines, f"  seqview_version: {args.seqview_version}")
+    emit(lines, f"  embedding_version: {args.embedding_version}")
+    emit(lines, f"  train_version: {args.train_version}")
+    emit(lines, f"  eval_version: {args.eval_version}")
     emit(lines, f"  gpu_instance_count: {args.gpu_instance_count}")
     emit(lines, f"  num_epochs: {args.epochs}")
     emit(lines, f"  eval_batches: {args.eval_batches}")
     emit(lines)
     emit(lines, "outputs:")
     for name in ["discovered", "raw", "vocab_spill", "vocab_reduced", "vocab", "seqview", "seqview_metadata", "embeddings", "train_output", "eval_output"]:
-        add_output(lines, name, root, name)
+        add_output(lines, name, root, output_suffixes[name])
     emit(lines)
     emit(lines, "jobs:")
     add_command_job(lines, "discover_raw_shards", "discover-raw-shards-10x-v2", args.cpu_compute, {
@@ -338,7 +360,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--pipeline-version", default="10x_v3", help="Semantic pipeline version, e.g. 10x_v3. Bump for every materially changed submitted pipeline.")
     p.add_argument("--source-root", default="azureml://subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourcegroups/wb-aml/workspaces/pconv-aml-offline/datastores/bingads_algo_pipelines_c08/paths/local/User/wenhlu/LRM_benchmark_v4_10x")
     p.add_argument("--data-version", help="Dataset/pipeline data version label. Defaults to v3-20260707-pconv-fullgraph-<pipeline-version>.")
-    p.add_argument("--output-root", help="Datastore output root. Defaults to derived/lrm_v4_pconv_v3/full_graph_<pipeline-version>.")
+    p.add_argument("--output-root", help="Base datastore output root. Defaults to derived/lrm_v4_pconv_v3/full_graph_10x_artifacts; stage/module versions choose subdirectories.")
+    p.add_argument("--discover-version", default="v1")
+    p.add_argument("--raw-version", default="v1")
+    p.add_argument("--vocab-spill-version", default="v1")
+    p.add_argument("--vocab-reduce-version", default="v1")
+    p.add_argument("--vocab-version", default="v1")
+    p.add_argument("--seqview-version", default="v1")
+    p.add_argument("--embedding-version", default="v1")
+    p.add_argument("--train-version", default="v1")
+    p.add_argument("--eval-version", default="v1")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
     p.add_argument("--merge-spill-compute", help="Optional larger CPU target for merge_vocab_spill fan-in when shard spill mounts exceed the default node disk.")
     p.add_argument("--cpu-shards", type=int, default=10)
@@ -355,7 +386,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.data_version is None:
         args.data_version = f"v3-20260707-pconv-fullgraph-{args.pipeline_version}"
     if args.output_root is None:
-        args.output_root = f"azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_{args.pipeline_version}"
+        args.output_root = "azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts"
     validate_args(args)
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
