@@ -229,10 +229,11 @@ python aml_dataprep/parallel/merge_partition_dirs.py
 """)
 
     reduce_outputs = []
+    reduce_compute = args.vocab_reduce_compute or args.cpu_compute
     for bucket in range(args.num_buckets):
         name = f"vocab_reduce_b{bucket:04d}"
         reduce_outputs.append((name, f"${{{{parent.jobs.{name}.outputs.reduced}}}}"))
-        add_command_job(lines, name, f"vocab-reduce-bucket-{bucket:04d}-all-domains", args.cpu_compute, {
+        add_command_job(lines, name, f"vocab-reduce-bucket-{bucket:04d}-all-domains", reduce_compute, {
             "spill": "${{parent.jobs.merge_vocab_spill.outputs.spill}}",
         }, {"reduced": output_value()}, f"""
 python aml_dataprep/parallel/vocab_reduce_bucket_group.py
@@ -371,6 +372,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--train-version", default="v1")
     p.add_argument("--eval-version", default="v1")
     p.add_argument("--cpu-compute", default="azureml:CPU-D2ADSV4")
+    p.add_argument("--vocab-reduce-compute", help="Optional larger CPU target for vocab_reduce_b* jobs only.")
     p.add_argument("--merge-spill-compute", help="Optional larger CPU target for merge_vocab_spill fan-in when shard spill mounts exceed the default node disk.")
     p.add_argument("--cpu-shards", type=int, default=10)
     p.add_argument("--num-buckets", type=int, default=5)
