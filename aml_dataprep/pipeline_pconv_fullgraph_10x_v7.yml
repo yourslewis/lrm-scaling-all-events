@@ -519,7 +519,7 @@ jobs:
   merge_vocab_spill:
     type: command
     display_name: merge-vocab-spill
-    compute: azureml:CPU-D2ADSV4
+    compute: azureml:CPU-E32SA
     environment: azureml:/subscriptions/72a0fe10-0a76-4898-9b7b-640e6e236fdc/resourceGroups/wb-aml/providers/Microsoft.MachineLearningServices/workspaces/pconv-aml-offline/environments/lrm-relay-env/versions/2
     code: ..
     inputs:
