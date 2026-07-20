@@ -1,0 +1,15 @@
+# bf16 override fragment for the MI300 (CDNA3) path.
+#
+# WHY a generated file, not a CLI flag: main.py calls
+#   gin.parse_config_file(gin_config_file)   # single file, no --gin_bindings
+# so bf16 is enabled by generating a self-contained sibling gin =
+#   <base L800 gin>  +  this one override line   (gin last-write-wins within a
+# single parsed file, so appending after the base line flips it to True).
+#
+# WHY NOT edit hstu.py: the autocast "cuda" literal at hstu.py:485 is CORRECT on
+# ROCm — HIP keeps the "cuda" device_type ("hip" is an invalid autocast string
+# and throws). The real bf16 switch is main_module_bf16, plumbed at
+# train.py:504/529/582/605 -> float_dtype=torch.bfloat16 -> hstu autocast_dtype.
+#
+# Generate with:  python docker/rocm/gen_bf16_gin.py
+Trainer.main_module_bf16 = True
