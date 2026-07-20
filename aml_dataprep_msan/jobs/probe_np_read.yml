@@ -1,0 +1,36 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ===========================================================================
+# PROBE (msan): can a computed15v2 CPU job READ the networkprotection datastore?
+# ---------------------------------------------------------------------------
+# Decides the whole msan plan. networkprotection cosmos store IS registered in
+# msan-retrieval-ranking-aml as `bingads_algo_prod_networkprotection_c08`
+# (ADLS Gen1, registered by Menghao Yang) — confirmed live in Studio.
+# This job fsspec-LISTS the LRM_benchmark_v4 root (no full download) to prove
+# the cluster identity / datastore credential can actually read it.
+#   PASS -> shard counts printed -> run vocab_msan.yml.
+#   FAIL (auth / NoIdentityOnCompute) -> datastore is identity-based and
+#         computed15v2 has no MSI with access -> attach identity or use
+#         credential-based datastore; tell Rex.
+# Submit (Cloud Shell as yourself, or any az with msan access):
+#   az ml job create -f aml_dataprep_msan/jobs/probe_np_read.yml \
+#     -g msan-aml -w msan-retrieval-ranking-aml \
+#     --subscription f920ee3b-6bdc-48c6-a487-9e0397b69322
+# ===========================================================================
+display_name: lrm-msan-probe-np-read
+experiment_name: lrm-msan-dataprep
+compute: azureml:computed15v2          # CPU cluster (D15_v2, 20c/140GB), no preemption
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file:
+    name: relay
+    channels: [conda-forge]
+    dependencies:
+      - python=3.10
+      - pip
+      - pip:
+          - "setuptools<81"
+          - azureml-fsspec
+          - azure-ai-ml
+code: ../..
+command: >-
+  python aml_dataprep_msan/list_np.py

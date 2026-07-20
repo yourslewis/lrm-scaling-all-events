@@ -1,0 +1,211 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+# ===========================================================================
+# FULL end-to-end LRM-L800 pipeline on msan-retrieval-ranking-aml.
+# ---------------------------------------------------------------------------
+# Adapted from the source aml_dataprep/pipeline.yml (lrm-l800-end2end), per
+# Lewis's design:
+#   * CPU data-prep (relay -> vocab -> parquet) runs on computed15v2 (D15_v2,
+#     20c/140GB, non-preemptible), reading the networkprotection cosmos store via
+#     user_identity passthrough (datastore stored-cred is empty; submitter token
+#     is used). PROVEN by probe lime_zoo_bd155h2m1k (NP_READ_OK train=110 val=40).
+#   * GPU steps (encode 8xA100, train L800) run as Singularity VC jobs on
+#     ads-shared-nd40 (same tenant 72f988bf), reading vocab/seqview/embeddings
+#     from msan workspaceblobstore (never touch cosmos).
+#
+# SUBMIT AS WL (wenhlu) — owns the local/User/wenhlu/... data path:
+#   az ml job create -f aml_dataprep_msan/pipeline.yml \
+#     -g msan-aml -w msan-retrieval-ranking-aml \
+#     --subscription f920ee3b-6bdc-48c6-a487-9e0397b69322
+# (or: bash aml_dataprep_msan/submit.sh pipeline)
+# ===========================================================================
+type: pipeline
+display_name: lrm-l800-msan-end2end
+experiment_name: lrm-l800-msan
+description: >-
+  LRM-L800 reproduction on msan. CPU relay/vocab/parquet on computed15v2 (cosmos
+  via user_identity passthrough); GPU encode/train on ads-shared-nd40 from blob.
+
+settings:
+  default_compute: azureml:computed15v2
+  continue_on_step_failure: false
+
+inputs:
+  data_version: "v1-20260622"          # bump to force the relay (and only it) to re-run
+
+outputs:
+  l800_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/l800_output
+
+jobs:
+
+  # ---------- step 0: relay cosmos -> blob (CPU, user_identity passthrough) ----
+  relay:
+    type: command
+    display_name: relay-cosmos-to-blob
+    compute: azureml:computed15v2
+    identity:
+      type: user_identity              # read networkprotection as submitter (WL)
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: relay-cpu
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+              - azureml-fsspec
+              - azure-ai-ml
+    code: ..
+    inputs:
+      data_version: ${{parent.inputs.data_version}}
+    outputs:
+      raw:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/raw
+    command: >-
+      python aml_dataprep/relay_shards.py
+      --data_version ${{inputs.data_version}}
+      --cosmos_sub f920ee3b-6bdc-48c6-a487-9e0397b69322
+      --cosmos_rg msan-aml
+      --cosmos_ws msan-retrieval-ranking-aml
+      --cosmos_datastore bingads_algo_prod_networkprotection_c08
+      --cosmos_root local/User/wenhlu/LRM_benchmark_v4
+      --output_dir ${{outputs.raw}}
+
+  # ---------- step 1: vocab (CPU, reads raw from blob) -------------------------
+  vocab:
+    type: command
+    display_name: vocab-step1
+    compute: azureml:computed15v2
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: vocab-cpu
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+    code: ..
+    inputs:
+      raw: ${{parent.jobs.relay.outputs.raw}}
+    outputs:
+      vocab:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
+    command: >-
+      SPILL=$(mktemp -d) &&
+      python data_prep/step1_collect_vocab_v3.py
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.vocab}}
+      --num_buckets 512
+      --max_open_handles 128
+      --spill_dir "$SPILL"
+      --no_monolithic &&
+      cat ${{outputs.vocab}}/vocab_meta.json
+
+  # ---------- step 2: parquet seqview (CPU, reads raw + vocab) -----------------
+  parquet:
+    type: command
+    display_name: parquet-step3
+    compute: azureml:computed15v2
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: parquet-cpu
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+              - numpy
+              - pandas
+              - pyarrow
+    code: ..
+    inputs:
+      raw: ${{parent.jobs.relay.outputs.raw}}
+      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+    outputs:
+      seqview:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/seqview
+    command: >-
+      python data_prep/step3_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+      --bucket_cache_size 64 &&
+      cat ${{outputs.seqview}}/metadata.json
+
+  # ---------- step 3: encode semantic embeddings (8x A100, nd40) ---------------
+  encode:
+    type: command
+    display_name: encode-8xA100
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+    outputs:
+      embeddings:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/embeddings
+    command: >-
+      pip install -q "sentence-transformers==5.4.1" &&
+      nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
+      python aml_dataprep/encode_embeddings_multigpu_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.embeddings}}
+      --domains 0,1,2,3,4
+      --batch_size 1024
+
+  # ---------- step 4: L800 training (8x A100, nd40) ---------------------------
+  train:
+    type: command
+    display_name: train-l800-8xA100
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet.outputs.seqview}}
+      embeddings: ${{parent.jobs.encode.outputs.embeddings}}
+    outputs:
+      output: ${{parent.outputs.l800_output}}
+    command: >-
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt &&
+      cd proposed_2-mmoe_ple/train &&
+      torchrun --nproc_per_node=8 main.py
+      --gin_config_file=../config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
+      --output_path=${{outputs.output}}
+      --data_path=${{inputs.seqview}}/train
+      --mode=job
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4

@@ -1,0 +1,6 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: lrm-relay-env
+version: "2"
+description: Relay step env (azureml-fsspec for cosmos->blob streaming).
+image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+conda_file: ./env_relay.yml

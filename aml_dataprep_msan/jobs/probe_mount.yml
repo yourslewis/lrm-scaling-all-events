@@ -1,0 +1,35 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ===========================================================================
+# PROBE (mount): read networkprotection via DATASTORE ro_mount instead of fsspec.
+# ---------------------------------------------------------------------------
+# The fsspec probe (probe_np_read.yml) fell back to the COMPUTE managed identity
+# and hit a Gen1 ACL denial. A datastore ro_mount goes through the AML data
+# runtime, which uses the DATASTORE's stored credential (the SP it was
+# registered with) — the same proven direct-mount path. If that SP has the Gen1
+# ACL, this reads with zero new grants, regardless of compute identity.
+#   PASS = MOUNT_OK + shard counts  -> switch vocab_msan to ro_mount.
+#   FAIL = ACL/Forbidden            -> datastore SP also lacks ACL; need a grant
+#                                      or user_identity passthrough as msanrrsvcgpt.
+# Submit: bash aml_dataprep_msan/submit.sh mount   (added to submit.sh)
+# ===========================================================================
+display_name: lrm-msan-probe-mount
+experiment_name: lrm-msan-dataprep
+compute: azureml:computed15v2
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+inputs:
+  raw:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/bingads_algo_prod_networkprotection_c08/paths/local/User/wenhlu/LRM_benchmark_v4
+command: >-
+  set -e &&
+  echo "=== mounted at ${{inputs.raw}} ===" &&
+  ls ${{inputs.raw}} &&
+  echo "train_shards=$(ls ${{inputs.raw}}/train/*.tsv 2>/dev/null | wc -l)" &&
+  echo "val_shards=$(ls ${{inputs.raw}}/val/*.tsv 2>/dev/null | wc -l)" &&
+  FIRST=$(ls ${{inputs.raw}}/train/*.tsv 2>/dev/null | head -1) &&
+  echo "first=$FIRST" &&
+  head -c 200 "$FIRST" &&
+  echo "" &&
+  echo MOUNT_OK

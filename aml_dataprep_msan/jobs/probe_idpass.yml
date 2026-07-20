@@ -1,0 +1,36 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ===========================================================================
+# PROBE (user_identity passthrough): read networkprotection using the SUBMITTER's
+# AAD token instead of the compute MI.
+# ---------------------------------------------------------------------------
+# Why: the datastore's stored credential is EMPTY (client_id all-zeros), so reads
+# fall back to the COMPUTE managed identity, which lacks the Gen1 ACL -> Forbidden.
+# `identity: { type: user_identity }` makes the AML data runtime use the
+# SUBMITTER's identity for data access (credential passthrough).
+#   * Submit as WL (wenhlu): data lives under local/User/wenhlu/ -> WL owns it ->
+#     ACL should pass with ZERO new grants.
+#   * Submit as msanrrsvcgpt: also proven to direct-mount this store before.
+#   PASS = NP_READ_OK + shard counts -> set vocab_msan to user_identity too.
+#   FAIL = still Forbidden           -> submitter lacks ACL; need a grant.
+# Submit: bash aml_dataprep_msan/submit.sh idpass
+# ===========================================================================
+display_name: lrm-msan-probe-idpass
+experiment_name: lrm-msan-dataprep
+compute: azureml:computed15v2
+identity:
+  type: user_identity
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file:
+    name: relay
+    channels: [conda-forge]
+    dependencies:
+      - python=3.10
+      - pip
+      - pip:
+          - "setuptools<81"
+          - azureml-fsspec
+          - azure-ai-ml
+code: ../..
+command: >-
+  python aml_dataprep_msan/list_np.py

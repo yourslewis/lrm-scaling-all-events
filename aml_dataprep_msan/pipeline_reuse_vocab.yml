@@ -1,0 +1,128 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+# Resume after helpful_car_t8j2k5fk9k completed vocab and failed submitting encode.
+# CPU parquet still uses user_identity to read msan workspaceblobstore mounts.
+# Singularity VC steps must not set user_identity: Aisc rejects it at submit time.
+type: pipeline
+display_name: lrm-l800-msan-end2end-reuse-vocab
+experiment_name: lrm-l800-msan
+description: >-
+  LRM-L800 msan resume using completed raw and vocab outputs from
+  helpful_car_t8j2k5fk9k; starts at parquet plus encode, then train.
+
+settings:
+  default_compute: azureml:computed15v2
+  continue_on_step_failure: false
+
+inputs:
+  raw_data:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/raw
+  vocab_data:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
+
+outputs:
+  l800_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/l800_output
+
+jobs:
+  parquet:
+    type: command
+    display_name: parquet-step3
+    compute: azureml:computed15v2
+    identity:
+      type: user_identity
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: parquet-cpu
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+              - numpy
+              - pandas
+              - pyarrow
+    code: ..
+    inputs:
+      raw: ${{parent.inputs.raw_data}}
+      vocab: ${{parent.inputs.vocab_data}}
+    outputs:
+      seqview:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/seqview
+    command: >-
+      python data_prep/step3_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+      --bucket_cache_size 64 &&
+      cat ${{outputs.seqview}}/metadata.json
+
+  encode:
+    type: command
+    display_name: encode-8xA100
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      vocab: ${{parent.inputs.vocab_data}}
+    outputs:
+      embeddings:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/embeddings
+    command: >-
+      pip install -q "sentence-transformers==5.4.1" &&
+      nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
+      python aml_dataprep/encode_embeddings_multigpu_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.embeddings}}
+      --domains 0,1,2,3,4
+      --batch_size 1024
+
+  train:
+    type: command
+    display_name: train-l800-8xA100
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-cuda11.8-cudnn8-ubuntu22.04:latest
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet.outputs.seqview}}
+      embeddings: ${{parent.jobs.encode.outputs.embeddings}}
+    outputs:
+      output: ${{parent.outputs.l800_output}}
+    command: >-
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt &&
+      cd proposed_2-mmoe_ple/train &&
+      torchrun --nproc_per_node=8 main.py
+      --gin_config_file=../config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
+      --output_path=${{outputs.output}}
+      --data_path=${{inputs.seqview}}/train
+      --mode=job
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4

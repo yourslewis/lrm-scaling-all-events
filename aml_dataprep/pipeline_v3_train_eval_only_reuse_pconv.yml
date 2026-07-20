@@ -1,0 +1,111 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+
+type: pipeline
+display_name: lrm-l800-pconv-v3-train-eval-only-reuse-10shard
+experiment_name: lrm-l800-pconv-v3-train-eval
+
+description: >-
+  Reuse completed 10-shard prep outputs from neat_jackal_xx387zbfbz and saved
+  embedding outputs from joyful_hominy_0hf91c3g1f; run only training and eval.
+
+inputs:
+  num_epochs: 3
+
+outputs:
+  train_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_cpu/neat_jackal_xx387zbfbz/epochs_param/train_output
+  eval_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_only_cpu/neat_jackal_xx387zbfbz/epochs_param/eval_output
+
+settings:
+  default_datastore: azureml:workspaceblobstore
+  continue_on_step_failure: false
+
+jobs:
+  train:
+    type: command
+    display_name: train-only-configurable-epochs-from-saved-prep-embeddings
+    compute: azureml:CPU-ECONVDDA
+    identity:
+      type: user_identity
+    environment: azureml:lrm-gpu-env:1
+    code: ..
+    inputs:
+      seqview:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
+      seqview_metadata:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
+      embeddings:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
+      num_epochs: ${{parent.inputs.num_epochs}}
+    outputs:
+      model: ${{parent.outputs.train_output}}
+    command: >-
+      set -e &&
+      (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/train_epochs.gin &&
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/train_epochs.gin &&
+      cd proposed_2-mmoe_ple/train &&
+      torchrun --standalone --nproc_per_node=1 main.py
+      --gin_config_file=/tmp/train_epochs.gin
+      --data_path=${{inputs.seqview}}/train
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+      --output_path=${{outputs.model}}
+      --mode=job
+      --run_id=pconv_10shard_trainonly_epochs_${{inputs.num_epochs}}
+
+  evaluate:
+    type: command
+    display_name: eval-only-from-train-output
+    compute: azureml:CPU-ECONVDDA
+    identity:
+      type: user_identity
+    environment: azureml:lrm-gpu-env:1
+    code: ..
+    inputs:
+      seqview:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview
+      seqview_metadata:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/v3-20260625-pconv-parallel-prep-10shards-econrelay-181406/layout_v1/seqview_metadata
+      embeddings:
+        type: uri_folder
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/train_eval_reuse/neat_jackal_xx387zbfbz/epochs_param/embeddings
+      model: ${{parent.jobs.train.outputs.model}}
+      num_epochs: ${{parent.inputs.num_epochs}}
+    outputs:
+      eval: ${{parent.outputs.eval_output}}
+    command: >-
+      set -e &&
+      mkdir -p ${{outputs.eval}} &&
+      (pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true) &&
+      cp proposed_2-mmoe_ple/config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin /tmp/eval_epochs.gin &&
+      sed -i "s/Trainer.num_epochs = [0-9][0-9]*/Trainer.num_epochs = ${{inputs.num_epochs}}/" /tmp/eval_epochs.gin &&
+      CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "best_checkpoint_*.pt" -print | sort | tail -1) &&
+      if [ -z "$CKPT" ]; then CKPT=$(find ${{inputs.model}} -path "*ckpts*" -name "checkpoint_batch*.pt" -print | sort | tail -1); fi &&
+      if [ -z "$CKPT" ]; then echo "No checkpoint found under ${{inputs.model}}" >&2; find ${{inputs.model}} -maxdepth 5 -type f >&2; exit 1; fi &&
+      echo "$CKPT" > ${{outputs.eval}}/checkpoint_path.txt &&
+      torchrun --standalone --nproc_per_node=1 eval/eval_per_event_type.py
+      --gin_config_file=/tmp/eval_epochs.gin
+      --data_path=${{inputs.seqview}}/eval
+      --ckpt_path="$CKPT"
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4
+      --eval_batches=100
+      --output_json=${{outputs.eval}}/eval_per_event_type.json
+      --mode=job

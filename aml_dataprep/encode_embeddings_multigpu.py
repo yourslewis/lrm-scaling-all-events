@@ -24,6 +24,16 @@ Usage (run once per node; spawns one process per GPU internally):
 
 By default uses every GPU reported by torch.cuda.device_count().
 """
+
+# Workflow notes:
+# 1. Load deterministic step1 vocab ids, 2. split id ranges across visible GPUs,
+# 3. encode each range independently, 4. merge into the single shard layout the
+#    trainer expects.
+# Performance tricks:
+# - Keep GPU workers on disjoint id ranges to avoid locks or write contention.
+# - Store final embeddings as float16 to cut blob/storage traffic roughly in half.
+# - Merge by direct row assignment so ordering is independent of worker timing.
+
 import argparse
 import json
 import logging

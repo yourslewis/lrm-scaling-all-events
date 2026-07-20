@@ -1,0 +1,163 @@
+$schema: https://azuremlschemas.azureedge.net/latest/pipelineJob.schema.json
+# ===========================================================================
+# Resume LRM-L800 pconv v3 after completed relay from clever_plum_pz8qg73h34.
+# ---------------------------------------------------------------------------
+# This intentionally skips the relay job and reuses the raw relay output that
+# clever_plum_pz8qg73h34 already materialized. The first recomputed step is
+# vocab, moved to a larger E32 CPU pool.
+# ===========================================================================
+type: pipeline
+display_name: lrm-l800-pconv-v3-reuse-relay-cpu-e32sa-vocab
+experiment_name: lrm-l800-pipeline
+description: >-
+  Reuse the pconv v3 relay output from clever_plum_pz8qg73h34, then rerun vocab
+  on Linux CPU-E32SA (Standard_E32a_v4 with system-assigned identity) and continue parquet/encode/train without regenerating relay.
+
+settings:
+  default_compute: azureml:CPU-D2ADSV4
+  continue_on_step_failure: false
+
+inputs:
+  raw_data:
+    type: uri_folder
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/raw
+
+outputs:
+  l800_output:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/l800_output_e32sa_vocab
+
+jobs:
+  # ---------- step 1: vocab (CPU, bounded-memory v3) ---------------------------
+  vocab:
+    type: command
+    display_name: vocab-step1-v3-e32
+    compute: azureml:CPU-E32SA
+    identity:
+      type: user_identity
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: vocab-cpu-v3
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+    code: ..
+    inputs:
+      raw: ${{parent.inputs.raw_data}}
+    outputs:
+      vocab:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/vocab_e32sa
+    command: >-
+      SPILL=$(mktemp -d) &&
+      python data_prep/step1_collect_vocab_v3.py
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.vocab}}
+      --num_buckets 512
+      --max_open_handles 128
+      --spill_dir "$SPILL"
+      --no_monolithic &&
+      cat ${{outputs.vocab}}/vocab_meta.json
+
+  # ---------- step 2: parquet seqview (CPU, reads raw + vocab) -----------------
+  parquet:
+    type: command
+    display_name: parquet-step3-v3-cpu
+    compute: azureml:CPU-ECONVDDA
+    environment:
+      image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+      conda_file:
+        name: parquet-cpu-v3
+        channels: [conda-forge]
+        dependencies:
+          - python=3.10
+          - pip
+          - pip:
+              - "setuptools<81"
+              - numpy
+              - pandas
+              - pyarrow
+    code: ..
+    inputs:
+      raw: ${{parent.inputs.raw_data}}
+      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+    outputs:
+      seqview:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/seqview_e32sa_vocab
+    command: >-
+      python data_prep/step3_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --train_dir ${{inputs.raw}}/train
+      --val_dir ${{inputs.raw}}/val
+      --output_dir ${{outputs.seqview}}
+      --mode all_events
+      --bucket_cache_size 64 &&
+      cat ${{outputs.seqview}}/metadata.json
+
+  # ---------- step 3: encode semantic embeddings (8x A100) ---------------------
+  encode:
+    type: command
+    display_name: encode-8xA100-v3
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment: azureml:lrm-gpu-env:1
+    code: ..
+    inputs:
+      vocab: ${{parent.jobs.vocab.outputs.vocab}}
+    outputs:
+      embeddings:
+        type: uri_folder
+        mode: rw_mount
+        path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/embeddings_e32sa_vocab
+    command: >-
+      pip install -q "sentence-transformers==5.4.1" &&
+      nvidia-smi --query-gpu=name --format=csv,noheader | head -1 &&
+      python aml_dataprep/encode_embeddings_multigpu_v3.py
+      --vocab_dir ${{inputs.vocab}}
+      --output_dir ${{outputs.embeddings}}
+      --domains 0,1,2,3,4
+      --batch_size 1024
+
+  # ---------- step 4: L800 training (8x A100) ---------------------------------
+  train:
+    type: command
+    display_name: train-l800-8xA100-v3
+    compute: /subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-nd40
+    resources:
+      instance_type: Singularity.ND96rs_v4
+      instance_count: 1
+    queue_settings:
+      job_tier: Standard
+    environment: azureml:lrm-gpu-env:1
+    code: ..
+    inputs:
+      seqview: ${{parent.jobs.parquet.outputs.seqview}}
+      embeddings: ${{parent.jobs.encode.outputs.embeddings}}
+    outputs:
+      output: ${{parent.outputs.l800_output}}
+    command: >-
+      pip install -q -r proposed_2-mmoe_ple/requirements.txt 2>/dev/null || true &&
+      cd proposed_2-mmoe_ple/train &&
+      torchrun --nproc_per_node=8 main.py
+      --gin_config_file=../config/generated_m4_seq_len_50pct/m4_aux_light_hstu_50pct_l800.gin
+      --output_path=${{outputs.output}}
+      --data_path=${{inputs.seqview}}/train
+      --mode=job
+      --ads_semantic_embd_path=${{inputs.embeddings}}/domain_0
+      --web_browsing_semantic_embd_path=${{inputs.embeddings}}/domain_1
+      --shopping_semantic_embd_path=${{inputs.embeddings}}/domain_2
+      --ads_pure_corpus_embd_path=${{inputs.embeddings}}/domain_3
+      --other_semantic_embd_path=${{inputs.embeddings}}/domain_4

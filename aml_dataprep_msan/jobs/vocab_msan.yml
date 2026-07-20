@@ -1,0 +1,71 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+# ===========================================================================
+# VOCAB on msan computed15v2 (CPU) — download networkprotection -> build vocab.
+# ---------------------------------------------------------------------------
+# Lewis's design: download raw shards from the networkprotection datastore, then
+# run the vocab builder on CPU (no GPU). In the source pipeline (lrm-l800-end2end)
+# vocab ran on the nd40 GPU VC and got preempted; this moves it to a dedicated,
+# non-preemptible CPU cluster.
+#
+# Single job (download + vocab share the same node, both CPU, ~140GB RAM):
+#   1. fsspec-stream every train/val *.tsv from networkprotection -> local SSD
+#      (Gen1 streaming read, same mechanism as the proven relay_shards.py;
+#       avoids fragile Gen1 ro_mount on AmlCompute).
+#   2. run memory-bounded data_prep/step1_collect_vocab_v3.py over the local shards.
+#   3. publish vocab -> workspaceblobstore (msan) for the downstream GPU encode.
+#
+# RUN probe_np_read.yml FIRST and confirm PASS (datastore is readable here).
+# Submit (Cloud Shell as yourself, or any az with msan access):
+#   az ml job create -f aml_dataprep_msan/jobs/vocab_msan.yml \
+#     -g msan-aml -w msan-retrieval-ranking-aml \
+#     --subscription f920ee3b-6bdc-48c6-a487-9e0397b69322
+# ===========================================================================
+display_name: lrm-msan-vocab-cpu
+experiment_name: lrm-msan-dataprep
+compute: azureml:computed15v2          # D15_v2 = 20 cores / 140 GB RAM / 1000 GB disk, no preemption
+identity:
+  type: user_identity                  # read networkprotection as the SUBMITTER (WL owns the data path);
+                                       # datastore stored-cred is empty, so passthrough is required (proven by probe lime_zoo_bd155h2m1k PASS)
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file:
+    name: vocab-cpu
+    channels: [conda-forge]
+    dependencies:
+      - python=3.10
+      - pip
+      - pip:
+          - "setuptools<81"
+          - azureml-fsspec
+          - azure-ai-ml
+code: ../..
+inputs:
+  data_version: "v1-20260622"          # cache-bust token (bump to force re-run)
+outputs:
+  vocab:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_msan_v3/vocab
+command: >-
+  set -e &&
+  echo "=== msan vocab: download networkprotection -> local, then build vocab ===" &&
+  RAW=$(mktemp -d) &&
+  python aml_dataprep/relay_shards.py
+  --data_version ${{inputs.data_version}}
+  --cosmos_sub f920ee3b-6bdc-48c6-a487-9e0397b69322
+  --cosmos_rg msan-aml
+  --cosmos_ws msan-retrieval-ranking-aml
+  --cosmos_datastore bingads_algo_prod_networkprotection_c08
+  --cosmos_root local/User/wenhlu/LRM_benchmark_v4
+  --output_dir "$RAW" &&
+  echo "train_shards=$(ls $RAW/train/*.tsv 2>/dev/null | wc -l) val_shards=$(ls $RAW/val/*.tsv 2>/dev/null | wc -l)" &&
+  SPILL=$(mktemp -d) &&
+  python data_prep/step1_collect_vocab_v3.py
+  --train_dir "$RAW"/train
+  --val_dir "$RAW"/val
+  --output_dir ${{outputs.vocab}}
+  --num_buckets 512
+  --max_open_handles 128
+  --spill_dir "$SPILL"
+  --no_monolithic &&
+  cat ${{outputs.vocab}}/vocab_meta.json
