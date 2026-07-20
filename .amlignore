@@ -1,16 +1,25 @@
-# AML snapshot ignore — keep the code: .. upload small.
-# Excludes local experiment artifacts / caches not needed by any pipeline step.
-.git
+# Exclude heavy/non-build artifacts from AML build-context + job code uploads.
+# The ROCm image only needs docker/rocm/* + the train package; results, data,
+# checkpoints, images, and notebooks bloat the upload (~936MB) with zero build value.
+.git/
 **/__pycache__/
-**/*.pyc
-# Local TensorBoard runs + checkpoints (700MB+), never read by AML jobs:
-proposed_2-mmoe_ple/train/exps/
+*.pyc
 results_v2/
-**/events.out.tfevents.*
-**/*.ckpt
-**/*.pt
-**/*.npy
-**/*.parquet
-# OS cruft
-.DS_Store
-**/.DS_Store
+baseline_result/
+proposed_result_1-all_events/
+proposed_result_2-mmoe_ple/
+# NOTE: do NOT use a bare **/data/ glob — */train/data/ads_datasets/*.py is real
+# package code imported by the HSTU build. Only exclude the TOP-LEVEL data dir.
+/data/
+*.png
+*.jpg
+*.html
+*.ipynb
+*.npy
+*.parquet
+*.pt
+*.ckpt
+*.csv
+*.tsv
+out/
+artifacts/
