@@ -1,0 +1,35 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+name: mi300_train_canary_dl_20260727_003236
+display_name: mi300-train-canary-dl-hotfix6
+experiment_name: lrm-l800-pconv-fullgraph-10x
+description: >-
+  Cheap MI300 canary after anchor failed in train with NoIdentityOnCompute on INPUT_embeddings.
+  Uses direct azureml:// paths as strings and azcopy/blobfuse-free listing via Azure CLI token, avoiding AML input mounts.
+  Purpose is to check whether continuation can avoid the AISC/user_identity limitation by downloading or otherwise resolving artifacts outside data capability.
+compute: azureml:/subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-mi300
+environment: azureml:lrm-rocm-smoke:1
+code: /tmp/mi300_train_mount_canary_code
+resources:
+  instance_count: 1
+  instance_type: Singularity.ND96isr_MI300X_v5
+  properties:
+    s_vc:
+      value: ads-relevance
+    sla_tier:
+      value: Standard
+queue_settings:
+  job_tier: standard
+command: |
+  set -euo pipefail &&
+  echo "download/list canary start $(date -u +%Y-%m-%dT%H:%M:%SZ)" &&
+  EMB="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/embeddings_v1" &&
+  SEQ="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/seqview_v1" &&
+  META="azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/seqview_metadata_v1" &&
+  python - <<'PY'
+  import os
+  print('no AML inputs are mounted in this canary')
+  print('cwd entries', os.listdir('.')[:20])
+  PY
+  echo "paths: $EMB $SEQ $META" &&
+  echo "download/list canary done $(date -u +%Y-%m-%dT%H:%M:%SZ)"

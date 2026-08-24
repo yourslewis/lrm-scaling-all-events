@@ -1,0 +1,60 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+display_name: mi300-encode-probe-h5-patch16-balanced-b2048-domains01
+experiment_name: lrm-l800-pconv-fullgraph-10x
+description: >-
+  MI300 bounded encode probe patch16: follow-up after patch15 completed at batch 2048
+  on domain 0. Uses verified balanced assignment code without unused metadata input,
+  but covers domains 0,1 to provide at least 10 buckets for evaluating all 8 GPUs.
+compute: azureml:/subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-mi300
+resources:
+  instance_type: Singularity.ND96isr_MI300X_v5
+  instance_count: 1
+  shm_size: 2g
+  properties:
+    s_vc:
+      value: ads-relevance
+    sla_tier:
+      value: Standard
+queue_settings:
+  job_tier: standard
+environment: azureml:lrm-rocm-smoke:1
+code: /tmp/mi300_patch16_code
+inputs:
+  vocab:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_v18/vocab_v18/
+outputs:
+  embeddings:
+    type: uri_folder
+    mode: rw_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/embeddings_probe_mi300_h5_patch16_balanced_b2048_domains01
+command: >-
+  set -euo pipefail &&
+  command -v rocm-smi || true &&
+  rocm-smi --showproductname --showdriverversion || true &&
+  command -v rocminfo || true &&
+  rocminfo | head -n 80 || true &&
+  ls -l /dev/kfd || true &&
+  ls -l /dev/dri || true &&
+  id && groups &&
+  export HIP_VISIBLE_DEVICES=${HIP_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7} &&
+  export ROCR_VISIBLE_DEVICES=${ROCR_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7} &&
+  unset CUDA_VISIBLE_DEVICES || true &&
+  export HSA_OVERRIDE_GFX_VERSION=9.4.2 &&
+  export PYTORCH_ROCM_ARCH=gfx942 &&
+  export HSA_ENABLE_SDMA=0 &&
+  python -m venv /tmp/mi300_patch16_venv &&
+  . /tmp/mi300_patch16_venv/bin/activate &&
+  python -m pip install -q --upgrade pip setuptools wheel &&
+  python -m pip install -q --index-url https://download.pytorch.org/whl/rocm6.2 torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 &&
+  python -m pip install -q "sentence-transformers==5.4.1" &&
+  python -c "import os, torch; print('torch', torch.__version__); print('hip', getattr(torch.version,'hip',None)); print('HIP_VISIBLE_DEVICES', os.getenv('HIP_VISIBLE_DEVICES')); print('ROCR_VISIBLE_DEVICES', os.getenv('ROCR_VISIBLE_DEVICES')); print('CUDA_VISIBLE_DEVICES', os.getenv('CUDA_VISIBLE_DEVICES')); print('HSA_OVERRIDE_GFX_VERSION', os.getenv('HSA_OVERRIDE_GFX_VERSION')); print('PYTORCH_ROCM_ARCH', os.getenv('PYTORCH_ROCM_ARCH')); print('cuda_visible', torch.cuda.is_available(), 'count', torch.cuda.device_count()); print('device0', torch.cuda.get_device_name(0) if torch.cuda.device_count()>0 else 'none'); assert torch.cuda.device_count() >= 8, 'Expected 8 visible MI300 GPUs for balanced assignment probe'" &&
+  python aml_dataprep/encode_embeddings_multigpu_v3.py
+  --vocab_dir ${{inputs.vocab}}
+  --output_dir ${{outputs.embeddings}}
+  --domains 0,1
+  --batch_size 2048
+  --model_name sentence-transformers/all-MiniLM-L6-v2
+  --emb_dim 384
+  --num_gpus 8
