@@ -1,0 +1,54 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+type: command
+name: mi300_train_canary_uid_20260727_003236
+display_name: mi300-train-canary-uid-hotfix6
+experiment_name: lrm-l800-pconv-fullgraph-10x
+description: >-
+  Cheap MI300 mount canary after anchor pconv_fullgraph_10x_v25_hash_hotfix6_mi300_20260725_215710
+  failed in train with DATA_CAPABILITY StreamAccess.Authentication NoIdentityOnCompute on INPUT_embeddings.
+  Verifies that adding user_identity to the MI300 command job can mount the completed anchor embeddings,
+  seqview, and metadata outputs before submitting a train/eval continuation.
+compute: azureml:/subscriptions/72a1fe05-772c-4836-869f-761a5805fcd4/resourceGroups/Ads-Singularity-RG-01/providers/Microsoft.MachineLearningServices/virtualClusters/ads-shared-mi300
+identity:
+  type: user_identity
+environment: azureml:lrm-rocm-smoke:1
+code: /tmp/mi300_train_mount_canary_code
+inputs:
+  embeddings:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/embeddings_v1
+  seqview:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/seqview_v1
+  metadata:
+    type: uri_folder
+    mode: ro_mount
+    path: azureml://datastores/workspaceblobstore/paths/derived/lrm_v4_pconv_v3/full_graph_10x_artifacts/seqview_metadata_v1
+resources:
+  instance_count: 1
+  instance_type: Singularity.ND96isr_MI300X_v5
+  properties:
+    s_vc:
+      value: ads-relevance
+    sla_tier:
+      value: Premium
+queue_settings:
+  job_tier: premium
+command: |
+  set -euo pipefail &&
+  echo "mount canary start $(date -u +%Y-%m-%dT%H:%M:%SZ)" &&
+  echo "embeddings=${{inputs.embeddings}}" &&
+  echo "seqview=${{inputs.seqview}}" &&
+  echo "metadata=${{inputs.metadata}}" &&
+  test -d "${{inputs.embeddings}}" && test -d "${{inputs.seqview}}" && test -d "${{inputs.metadata}}" &&
+  find "${{inputs.embeddings}}" -maxdepth 2 -type d | sort | head -20 &&
+  find "${{inputs.seqview}}" -maxdepth 2 -type d | sort | head -20 &&
+  find "${{inputs.metadata}}" -maxdepth 2 -type f | sort | head -20 &&
+  python - <<'PY'
+  import os
+  for name, path in [('embeddings', os.environ.get('AZURE_ML_INPUT_embeddings')), ('seqview', os.environ.get('AZURE_ML_INPUT_seqview')), ('metadata', os.environ.get('AZURE_ML_INPUT_metadata'))]:
+      print(name, path, 'exists=', bool(path and os.path.exists(path)), 'entries=', os.listdir(path)[:10] if path and os.path.isdir(path) else None)
+  PY
+  echo "mount canary done $(date -u +%Y-%m-%dT%H:%M:%SZ)"
